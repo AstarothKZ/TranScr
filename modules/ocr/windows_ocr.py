@@ -33,9 +33,9 @@ class WindowsOCRModule:
 
     def recognize(self, image: np.ndarray) -> list[OCRText]:
         bitmap = self._create_bitmap(image)
-        result = asyncio.run(self.engine.recognize_async(bitmap))
-        texts: list[OCRText] = []
+        result = asyncio.run(self._recognize_async(bitmap))
 
+        texts: list[OCRText] = []
         for line in result.lines:
             words = [word for word in line.words if word.text.strip()]
             if not words:
@@ -67,6 +67,10 @@ class WindowsOCRModule:
             )
 
         return texts
+
+    async def _recognize_async(self, bitmap: SoftwareBitmap):
+        """Обёртка для корректного await асинхронной операции winsdk."""
+        return await self.engine.recognize_async(bitmap)
 
     @staticmethod
     def _create_bitmap(image: np.ndarray) -> SoftwareBitmap:
