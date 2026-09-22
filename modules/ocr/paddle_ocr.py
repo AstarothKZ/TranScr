@@ -5,7 +5,6 @@ from paddleocr import PaddleOCR
 
 from modules.ocr.types import OCRText
 
-
 class PaddleOCRModule:
     """Распознаёт текст на изображении с помощью PP-OCRv6."""
 
@@ -26,19 +25,20 @@ class PaddleOCRModule:
 
     def recognize(self, image: np.ndarray) -> list[OCRText]:
         results = self.ocr.predict(image)
+
         texts: list[OCRText] = []
 
         for result in results:
-            result_data = result.json["res"]
+            data = result.json["res"]
 
-            rec_texts = result_data.get("rec_texts", [])
-            rec_scores = result_data.get("rec_scores", [])
-            rec_boxes = result_data.get("rec_boxes", [])
+            rec_texts = data["rec_texts"]
+            rec_scores = data["rec_scores"]
+            rec_boxes = data["rec_boxes"]
 
             for text, score, box in zip(
-                rec_texts,
-                rec_scores,
-                rec_boxes,
+                    rec_texts,
+                    rec_scores,
+                    rec_boxes,
             ):
                 text = text.strip()
 
