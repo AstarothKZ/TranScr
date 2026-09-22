@@ -3,6 +3,8 @@ import os
 import numpy as np
 from paddleocr import PaddleOCR
 
+from modules.ocr.types import OCRText
+
 
 class PaddleOCRModule:
     """Распознаёт текст на изображении с помощью PP-OCRv6."""
@@ -22,16 +24,38 @@ class PaddleOCRModule:
             use_textline_orientation=False,
         )
 
-    def recognize(self, image: np.ndarray) -> list[str]:
-        """Возвращает распознанные непустые строки."""
+    def recognize(self, image: np.ndarray) -> list[OCRText]:
         results = self.ocr.predict(image)
-        texts: list[str] = []
+        texts: list[OCRText] = []
 
         for result in results:
             result_data = result.json["res"]
 
-            for text in result_data["rec_texts"]:
-                if text.strip():
-                    texts.append(text.strip())
+            rec_texts = result_data.get("rec_texts", [])
+            rec_scores = result_data.get("rec_scores", [])
+            rec_boxes = result_data.get("rec_boxes", [])
+
+            for text, score, box in zip(
+                rec_texts,
+                rec_scores,
+                rec_boxes,
+            ):
+                text = text.strip()
+
+                if not text:
+                    continue
+
+                left, top, right, bottom = map(int, box)
+
+                texts.append(
+                    OCRText(
+                        text=text,
+                        left=left,
+                        top=top,
+                        right=right,
+                        bottom=bottom,
+                        confidence=float(score),
+                    )
+                )
 
         return texts
