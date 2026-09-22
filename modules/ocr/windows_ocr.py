@@ -1,10 +1,10 @@
 import asyncio
 
 import numpy as np
-from winrt.windows.globalization import Language
-from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
-from winrt.windows.media.ocr import OcrEngine
-from winrt.windows.storage.streams import DataWriter
+from winsdk.windows.globalization import Language
+from winsdk.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
+from winsdk.windows.media.ocr import OcrEngine
+from winsdk.windows.storage.streams import DataWriter
 
 from modules.ocr.types import OCRText
 
