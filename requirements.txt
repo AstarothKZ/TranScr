@@ -1,0 +1,5 @@
+mss
+keyboard
+numpy
+paddleocr==3.7.0
+paddlepaddle==3.2.2
