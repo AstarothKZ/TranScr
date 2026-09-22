@@ -3,7 +3,7 @@ keyboard
 numpy
 paddleocr==3.7.0
 paddlepaddle==3.2.2
-
+deep-translator
 winrt-runtime==3.2.1
 winrt-Windows.Foundation==3.2.1
 winrt-Windows.Foundation.Collections==3.2.1
