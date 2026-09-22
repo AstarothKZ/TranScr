@@ -5,8 +5,23 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="108e2c86-a32c-46e8-8438-67954f245938" name="Changes" comment="-">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/application.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/capture/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/capture/screen_capture.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/base.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/ocr_worker.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/paddle_ocr.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/types.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/ocr/windows_ocr.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/screenshots/.gitkeep" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -144,7 +159,7 @@
       <option name="presentableId" value="Default" />
       <updated>1790069642038</updated>
       <workItem from="1790069643497" duration="7064000" />
-      <workItem from="1790077190529" duration="3007000" />
+      <workItem from="1790077190529" duration="5193000" />
     </task>
     <task id="LOCAL-00001" summary="-">
       <option name="closed" value="true" />
@@ -186,7 +201,23 @@
       <option name="project" value="LOCAL" />
       <updated>1790077415910</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="-">
+      <option name="closed" value="true" />
+      <created>1790081538352</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1790081538352</updated>
+    </task>
+    <task id="LOCAL-00007" summary="-">
+      <option name="closed" value="true" />
+      <created>1790081589501</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1790081589501</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

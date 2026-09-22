@@ -9,42 +9,30 @@ from modules.ocr.types import OCRText
 
 
 class Application:
-    """Главный цикл приложения."""
+    """Главный цикл приложения MVP."""
 
     HOTKEY = "alt+t"
     EXIT_KEY = "esc"
+    DEFAULT_OCR_LANGUAGE = "en-US"
 
     def __init__(self) -> None:
         self.project_root = Path(__file__).resolve().parents[1]
+        screenshot_dir = self.project_root / "test" / "screenshots"
 
-        screenshot_dir = (
-            self.project_root / "test" / "screenshots"
-        )
-
-        self.screen_capturer = ScreenCapturer(
-            screenshot_dir
-        )
-
+        self.screen_capturer = ScreenCapturer(screenshot_dir)
         self.ocr = self._select_ocr()
-
         self.ocr_worker = OCRWorker(
             self.ocr,
-            self._on_ocr_result,
+            on_result=self._on_ocr_result,
+            on_error=self._on_ocr_error,
         )
-
         self.hotkey_handle = None
 
     def run(self) -> None:
         print()
         print("TranScr запущен.")
-        print(
-            f"Нажмите {self.HOTKEY.upper()} "
-            "для захвата экрана."
-        )
-        print(
-            f"Нажмите {self.EXIT_KEY.upper()} "
-            "для выхода."
-        )
+        print(f"{self.HOTKEY.upper()} — захват экрана.")
+        print(f"{self.EXIT_KEY.upper()} — выход.")
 
         self.hotkey_handle = keyboard.add_hotkey(
             self.HOTKEY,
@@ -55,40 +43,37 @@ class Application:
             keyboard.wait(self.EXIT_KEY)
         finally:
             if self.hotkey_handle is not None:
-                keyboard.remove_hotkey(
-                    self.hotkey_handle
-                )
-
+                keyboard.remove_hotkey(self.hotkey_handle)
             self.ocr_worker.close()
-
-        print("TranScr остановлен.")
+            print("TranScr остановлен.")
 
     def _select_ocr(self):
-        """Показывает меню выбора OCR."""
-
+        """Выбор OCR для текущего запуска."""
         print()
         print("Выберите OCR:")
-        print("1 - Windows OCR")
+        print("1 - Windows OCR (по умолчанию)")
         print("2 - PaddleOCR")
 
         while True:
-            choice = input("Ваш выбор: ").strip()
+            choice = input("Ваш выбор: ").strip() or "1"
 
-            if choice == "1":
-                from modules.ocr.windows_ocr import WindowsOCRModule
+            try:
+                if choice == "1":
+                    from modules.ocr.windows_ocr import WindowsOCRModule
 
-                print("Выбран: Windows OCR")
+                    ocr = WindowsOCRModule(language=self.DEFAULT_OCR_LANGUAGE)
+                    print("Выбран: Windows OCR")
+                    return ocr
 
-                return WindowsOCRModule(
-                    language="en-US"
-                )
+                if choice == "2":
+                    from modules.ocr.paddle_ocr import PaddleOCRModule
 
-            if choice == "2":
-                from modules.ocr.paddle_ocr import PaddleOCRModule
-
-                print("Выбран: PaddleOCR")
-
-                return PaddleOCRModule()
+                    ocr = PaddleOCRModule()
+                    print("Выбран: PaddleOCR")
+                    return ocr
+            except Exception as error:
+                print(f"Не удалось запустить выбранный OCR: {error}")
+                continue
 
             print("Ошибка: введите 1 или 2.")
 
@@ -96,32 +81,21 @@ class Application:
         capture_started = perf_counter()
 
         try:
-            image, path = (
-                self.screen_capturer.capture_full_screen()
-            )
-
-            capture_time = (
-                perf_counter() - capture_started
-            ) * 1000
+            image, path = self.screen_capturer.capture_full_screen()
+            capture_time = (perf_counter() - capture_started) * 1000
 
             print(
                 f"Скриншот сохранён: {path} "
                 f"(захват: {capture_time:.0f} мс)"
             )
 
-            self.ocr_worker.submit(
-                image,
-                capture_started,
-            )
-
+            self.ocr_worker.submit(image, capture_started)
         except Exception as error:
             print(f"Ошибка захвата: {error}")
 
-    def _on_ocr_result(
-        self,
-        texts: list[OCRText],
-    ) -> None:
-        print()
+    @staticmethod
+    def _on_ocr_result(texts: list[OCRText], total_time_ms: float) -> None:
+        print(f"OCR: {total_time_ms:.0f} мс")
         print("Распознанный текст:")
 
         if not texts:
@@ -129,8 +103,16 @@ class Application:
             return
 
         for item in texts:
-            print(
-                f"[{item.left}, {item.top}, "
-                f"{item.right}, {item.bottom}] "
-                f"{item.text}"
+            confidence = (
+                f" | conf={item.confidence:.3f}"
+                if item.confidence is not None
+                else ""
             )
+            print(
+                f"[{item.left}, {item.top}, {item.right}, {item.bottom}] "
+                f"{item.text}{confidence}"
+            )
+
+    @staticmethod
+    def _on_ocr_error(error: Exception) -> None:
+        print(f"Ошибка OCR: {error}")

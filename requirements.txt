@@ -1,12 +1,17 @@
+# Screen capture / hotkeys
 mss
 keyboard
 numpy
+
+# Windows OCR
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
+
+# Alternative OCR
 paddleocr==3.7.0
 paddlepaddle==3.2.2
-winrt-runtime
-winrt-Windows.Foundation
-winrt-Windows.Foundation.Collections
-winrt-Windows.Globalization
-winrt-Windows.Graphics.Imaging
-winrt-Windows.Media.Ocr
-winrt-Windows.Storage.Streams

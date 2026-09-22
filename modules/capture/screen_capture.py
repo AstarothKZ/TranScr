@@ -7,14 +7,14 @@ import numpy as np
 
 
 class ScreenCapturer:
-    """Отвечает за получение изображения с экрана и его сохранение."""
+    """Получает изображение виртуального рабочего стола Windows."""
 
     def __init__(self, output_dir: Path) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def capture_full_screen(self) -> tuple[np.ndarray, Path]:
-        """Захватывает весь доступный экран и сохраняет PNG."""
+        """Захватывает все доступные мониторы и сохраняет PNG для тестов."""
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
         output_path = self.output_dir / f"screenshot_{timestamp}.png"
 
@@ -31,8 +31,6 @@ class ScreenCapturer:
                 3,
             ).copy()
 
-            # PNG сохраняется только для тестов.
-            # OCR получает image напрямую из памяти.
             mss.tools.to_png(
                 screenshot.rgb,
                 screenshot.size,

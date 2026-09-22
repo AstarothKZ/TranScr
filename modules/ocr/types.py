@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class OCRText:
     text: str
     left: int
@@ -9,3 +9,4 @@ class OCRText:
     right: int
     bottom: int
     confidence: float | None = None
+    polygon: tuple[tuple[int, int], ...] | None = None
