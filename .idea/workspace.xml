@@ -5,7 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="108e2c86-a32c-46e8-8438-67954f245938" name="Changes" comment="-">
-      <change beforePath="$PROJECT_DIR$/modules/ocr/windows_ocr.py" beforeDir="false" afterPath="$PROJECT_DIR$/modules/ocr/windows_ocr.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Дизайн-проект.docx" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,61 +39,61 @@
 }</component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.0000000000000013" />
-      <entry key="MS500" value="1.00107393170841" />
-      <entry key="S2" value="1.2159476602325487" />
-      <entry key="S5" value="1.86909445490074" />
-      <entry key="S10" value="2.550199318133764" />
-      <entry key="S30" value="3.404945561597058" />
-      <entry key="S60" value="4.358662409446412" />
-      <entry key="M2" value="7.80400175348896" />
-      <entry key="M5" value="15.324409082042315" />
-      <entry key="M10" value="20.154653665717614" />
-      <entry key="M15" value="22.189647075345775" />
-      <entry key="M30" value="24.56792899650996" />
-      <entry key="H1" value="26.033993613504393" />
-      <entry key="H2" value="26.923221481742043" />
-      <entry key="H4" value="27.43224100692945" />
-      <entry key="D1" value="27.900654147613356" />
-      <entry key="W1" value="27.985682682444406" />
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.000094738716678" />
+      <entry key="S2" value="1.2213534416480882" />
+      <entry key="S5" value="2.3841099454997767" />
+      <entry key="S10" value="3.8841954445165734" />
+      <entry key="S30" value="6.110241543099199" />
+      <entry key="S60" value="7.555409929822829" />
+      <entry key="M2" value="11.170015856467788" />
+      <entry key="M5" value="18.869850777155325" />
+      <entry key="M10" value="23.86248722963425" />
+      <entry key="M15" value="25.976595437526857" />
+      <entry key="M30" value="28.450716721705444" />
+      <entry key="H1" value="29.97209758491562" />
+      <entry key="H2" value="30.891277655568366" />
+      <entry key="H4" value="31.415984467689313" />
+      <entry key="D1" value="31.89790111255275" />
+      <entry key="W1" value="31.98528826136469" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
-      <entry key="MS500" value="5.833985654919783E-188" />
-      <entry key="S2" value="1.5541442974579989E-47" />
-      <entry key="S5" value="1.8905864271408393E-19" />
-      <entry key="S10" value="4.348087426835897E-10" />
-      <entry key="S30" value="7.575874226215163E-4" />
-      <entry key="S60" value="0.027524306033422853" />
-      <entry key="M2" value="0.1659045087796676" />
-      <entry key="M5" value="0.4874648168153422" />
-      <entry key="M10" value="0.6981868065319927" />
-      <entry key="M15" value="0.7870115243641914" />
-      <entry key="M30" value="0.8871366999308454" />
-      <entry key="H1" value="0.9418793446778869" />
-      <entry key="H2" value="0.9705046855517426" />
-      <entry key="H4" value="0.985141962131216" />
-      <entry key="D1" value="0.9975081890273007" />
-      <entry key="W1" value="0.9996436462661326" />
+      <entry key="MS500" value="7.516069999223934E-195" />
+      <entry key="S2" value="2.9444060677180023E-49" />
+      <entry key="S5" value="3.869003134918754E-20" />
+      <entry key="S10" value="1.9669781734728933E-10" />
+      <entry key="S30" value="5.815671227490855E-4" />
+      <entry key="S60" value="0.02411570282511141" />
+      <entry key="M2" value="0.15529231412118044" />
+      <entry key="M5" value="0.4747445466056665" />
+      <entry key="M10" value="0.6890170873103704" />
+      <entry key="M15" value="0.7801054791639246" />
+      <entry key="M30" value="0.8832358004315292" />
+      <entry key="H1" value="0.939806256859109" />
+      <entry key="H2" value="0.9694360509384355" />
+      <entry key="H4" value="0.984599436795713" />
+      <entry key="D1" value="0.9974166120928676" />
+      <entry key="W1" value="0.9996305353243307" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="2.3419534163222024E-4" />
-      <entry key="MS500" value="0.18849250854723984" />
-      <entry key="S2" value="0.8428911112590848" />
-      <entry key="S5" value="1.6590326624719147" />
-      <entry key="S10" value="2.4187747409106204" />
-      <entry key="S30" value="3.3517266932797947" />
-      <entry key="S60" value="4.357036902948643" />
-      <entry key="M2" value="7.953690246622276" />
-      <entry key="M5" value="15.804187756057011" />
-      <entry key="M10" value="20.848624046841252" />
-      <entry key="M15" value="22.973743163668807" />
-      <entry key="M30" value="25.453546156718943" />
-      <entry key="H1" value="26.975093359377855" />
-      <entry key="H2" value="27.893330098211518" />
-      <entry key="H4" value="28.417183091047054" />
-      <entry key="D1" value="28.898128735747147" />
-      <entry key="W1" value="28.985321521044284" />
+      <entry key="MS100" value="0.9201876506248751" />
+      <entry key="MS500" value="0.9835870934411272" />
+      <entry key="S2" value="1.1753972762136424" />
+      <entry key="S5" value="2.2340451385932614" />
+      <entry key="S10" value="3.7195414013488617" />
+      <entry key="S30" value="6.0141343758727315" />
+      <entry key="S60" value="7.523019509583338" />
+      <entry key="M2" value="11.293736186077028" />
+      <entry key="M5" value="19.330323699253" />
+      <entry key="M10" value="24.543911227046006" />
+      <entry key="M15" value="26.751514298605834" />
+      <entry key="M30" value="29.33128689595831" />
+      <entry key="H1" value="30.91054847522421" />
+      <entry key="H2" value="31.860029056422025" />
+      <entry key="H4" value="32.40023955911328" />
+      <entry key="D1" value="32.89526002102819" />
+      <entry key="W1" value="32.984910545164446" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -105,25 +108,25 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.main.executor": "Run",
-    "Python.paddle_ocr.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "master",
-    "last_opened_file_path": "C:/Users/qwert/PycharmProjects/TranScr",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "configurable.group.python.group.settings"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.paddle_ocr.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/qwert/PycharmProjects/TranScr&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="C:\Users\qwert\PycharmProjects\TranScr" />
@@ -144,7 +147,17 @@
       <option name="presentableId" value="Default" />
       <updated>1790069642038</updated>
       <workItem from="1790069643497" duration="7064000" />
-      <workItem from="1790077190529" duration="6692000" />
+      <workItem from="1790077190529" duration="6808000" />
+      <workItem from="1790091562101" duration="83000" />
+      <workItem from="1790153673353" duration="90000" />
+      <workItem from="1790156609051" duration="526000" />
+      <workItem from="1790160732768" duration="506000" />
+      <workItem from="1790240044148" duration="623000" />
+      <workItem from="1790241079159" duration="1960000" />
+      <workItem from="1790320057384" duration="2248000" />
+      <workItem from="1790577234346" duration="628000" />
+      <workItem from="1790877204741" duration="404000" />
+      <workItem from="1790919658221" duration="21000" />
     </task>
     <task id="LOCAL-00001" summary="-">
       <option name="closed" value="true" />
@@ -226,7 +239,15 @@
       <option name="project" value="LOCAL" />
       <updated>1790085562810</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="-">
+      <option name="closed" value="true" />
+      <created>1790086025938</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1790086025938</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -237,7 +258,7 @@
     <option name="LAST_COMMIT_MESSAGE" value="-" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/TranScr$main.coverage" NAME="main Coverage Results" MODIFIED="1790085942724" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/TranScr$main.coverage" NAME="main Coverage Results" MODIFIED="1790322806692" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/TranScr$paddle_ocr.coverage" NAME="paddle_ocr Coverage Results" MODIFIED="1790074750298" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/modules/ocr" />
   </component>
 </project>
