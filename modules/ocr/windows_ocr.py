@@ -10,11 +10,10 @@ from modules.ocr.types import OCRText
 
 
 class WindowsOCRModule:
-    """OCR через Windows.Media.Ocr."""
+    """OCR через Windows.Media.Ocr с языковым пакетом Windows."""
 
     def __init__(self, language: str = "en-US") -> None:
         language_object = Language(language)
-
         if not OcrEngine.is_language_supported(language_object):
             available = [
                 item.language_tag
@@ -24,7 +23,6 @@ class WindowsOCRModule:
                 f"Язык OCR '{language}' не установлен. "
                 f"Доступные языки: {available}"
             )
-
         self.engine = OcrEngine.try_create_from_language(language_object)
         if self.engine is None:
             raise RuntimeError(
@@ -34,13 +32,12 @@ class WindowsOCRModule:
     def recognize(self, image: np.ndarray) -> list[OCRText]:
         bitmap = self._create_bitmap(image)
         result = asyncio.run(self._recognize_async(bitmap))
-
         texts: list[OCRText] = []
+
         for line in result.lines:
             words = [word for word in line.words if word.text.strip()]
             if not words:
                 continue
-
             left = min(int(word.bounding_rect.x) for word in words)
             top = min(int(word.bounding_rect.y) for word in words)
             right = max(
@@ -51,11 +48,9 @@ class WindowsOCRModule:
                 int(word.bounding_rect.y + word.bounding_rect.height)
                 for word in words
             )
-
             text = line.text.strip()
             if not text:
                 continue
-
             texts.append(
                 OCRText(
                     text=text,
@@ -65,11 +60,9 @@ class WindowsOCRModule:
                     bottom=bottom,
                 )
             )
-
         return texts
 
     async def _recognize_async(self, bitmap: SoftwareBitmap):
-        """Обёртка для корректного await асинхронной операции winsdk."""
         return await self.engine.recognize_async(bitmap)
 
     @staticmethod
@@ -82,7 +75,6 @@ class WindowsOCRModule:
         writer = DataWriter()
         writer.write_bytes(rgba.tobytes())
         buffer = writer.detach_buffer()
-
         return SoftwareBitmap.create_copy_from_buffer(
             buffer,
             BitmapPixelFormat.RGBA8,

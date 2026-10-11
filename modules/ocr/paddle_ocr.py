@@ -11,14 +11,12 @@ class PaddleOCRModule:
 
     def __init__(self) -> None:
         cpu_count = os.cpu_count() or 4
-        cpu_threads = min(8, cpu_count)
-
         self.ocr = PaddleOCR(
             text_detection_model_name="PP-OCRv6_small_det",
             text_recognition_model_name="PP-OCRv6_small_rec",
             device="cpu",
+            cpu_threads=min(8, cpu_count),
             enable_mkldnn=True,
-            cpu_threads=cpu_threads,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
@@ -42,26 +40,24 @@ class PaddleOCRModule:
 
                 polygon = None
                 left = top = right = bottom = 0
-
                 if index < len(rec_polys):
                     points = np.asarray(rec_polys[index], dtype=float)
                     polygon = tuple(
                         (int(point[0]), int(point[1])) for point in points
                     )
-                    left = min(point[0] for point in polygon)
-                    top = min(point[1] for point in polygon)
-                    right = max(point[0] for point in polygon)
-                    bottom = max(point[1] for point in polygon)
+                    if polygon:
+                        left = min(point[0] for point in polygon)
+                        top = min(point[1] for point in polygon)
+                        right = max(point[0] for point in polygon)
+                        bottom = max(point[1] for point in polygon)
                 elif index < len(rec_boxes):
-                    box = rec_boxes[index]
-                    left, top, right, bottom = map(int, box)
+                    left, top, right, bottom = map(int, rec_boxes[index])
 
                 confidence = (
                     float(rec_scores[index])
                     if index < len(rec_scores)
                     else None
                 )
-
                 texts.append(
                     OCRText(
                         text=text,
@@ -73,5 +69,4 @@ class PaddleOCRModule:
                         polygon=polygon,
                     )
                 )
-
         return texts

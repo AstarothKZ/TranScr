@@ -10,7 +10,7 @@ from modules.ocr.types import OCRText
 
 
 class OCRWorker:
-    """Выполняет OCR в отдельном потоке, не блокируя основной цикл."""
+    """Выполняет OCR в отдельном потоке и не накапливает кадры в очереди."""
 
     def __init__(
         self,
@@ -31,14 +31,16 @@ class OCRWorker:
         self._thread.start()
 
     def submit(self, image: np.ndarray, started_at: float) -> None:
-        """Передаёт кадр в OCR. Пока worker занят, новые кадры не копятся."""
+        """Передаёт кадр в OCR; кадр пропускается, если worker занят."""
+        if self._stop_event.is_set():
+            return
         try:
             self._queue.put_nowait((image, started_at))
         except Full:
             print("OCR занят, кадр пропущен.")
 
     def close(self) -> None:
-        """Останавливает worker и ждёт завершения текущей задачи."""
+        """Останавливает worker и ждёт окончания текущей операции."""
         self._stop_event.set()
         self._thread.join()
 
@@ -55,7 +57,9 @@ class OCRWorker:
                 ocr_time_ms = (perf_counter() - ocr_started) * 1000
                 total_time_ms = (perf_counter() - started_at) * 1000
                 self._on_result(texts, total_time_ms)
-                print(f"Время OCR: {ocr_time_ms:.0f} мс")
+                print(f"Время обработки OCR: {ocr_time_ms:.0f} мс")
             except Exception as error:
                 if self._on_error is not None:
                     self._on_error(error)
+                else:
+                    print(f"Ошибка OCR: {error}")
