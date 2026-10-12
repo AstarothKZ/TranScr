@@ -1,5 +1,5 @@
 from queue import Empty, Full, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import perf_counter
 from typing import Callable
 
@@ -10,7 +10,7 @@ from modules.ocr.types import OCRText
 
 
 class OCRWorker:
-    """Выполняет OCR в отдельном потоке и не накапливает кадры в очереди."""
+    """Выполняет OCR в фоне и не копит кадры в очереди."""
 
     def __init__(
         self,
@@ -23,26 +23,34 @@ class OCRWorker:
         self._on_error = on_error
         self._queue: Queue[tuple[np.ndarray, float]] = Queue(maxsize=1)
         self._stop_event = Event()
-        self._thread = Thread(
-            target=self._run,
-            name="ocr-worker",
-            daemon=True,
-        )
+        self._job_lock = Lock()
+        self._job_pending = False
+        self._thread = Thread(target=self._run, name="ocr-worker", daemon=True)
         self._thread.start()
 
-    def submit(self, image: np.ndarray, started_at: float) -> None:
-        """Передаёт кадр в OCR; кадр пропускается, если worker занят."""
+    def submit(self, image: np.ndarray, started_at: float) -> bool:
+        """Передаёт кадр в OCR. Возвращает False, если очередь занята."""
         if self._stop_event.is_set():
-            return
-        try:
-            self._queue.put_nowait((image, started_at))
-        except Full:
-            print("OCR занят, кадр пропущен.")
+            return False
+        with self._job_lock:
+            # Не принимаем второй кадр, пока не завершён предыдущий. Это также
+            # не даёт результату старого кадра попасть в новый запрос приложения.
+            if self._job_pending:
+                return False
+            self._job_pending = True
+            try:
+                self._queue.put_nowait((image, started_at))
+                return True
+            except Full:
+                self._job_pending = False
+                return False
 
-    def close(self) -> None:
-        """Останавливает worker и ждёт окончания текущей операции."""
+    def close(self, timeout: float = 5.0) -> None:
+        """Останавливает worker и ограничивает ожидание при зависшем OCR."""
         self._stop_event.set()
-        self._thread.join()
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            print("Предупреждение: поток OCR ещё выполняется.", flush=True)
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -52,14 +60,16 @@ class OCRWorker:
                 continue
 
             try:
-                ocr_started = perf_counter()
                 texts = self._ocr.recognize(image)
-                ocr_time_ms = (perf_counter() - ocr_started) * 1000
                 total_time_ms = (perf_counter() - started_at) * 1000
-                self._on_result(texts, total_time_ms)
-                print(f"Время обработки OCR: {ocr_time_ms:.0f} мс")
             except Exception as error:
+                with self._job_lock:
+                    self._job_pending = False
                 if self._on_error is not None:
                     self._on_error(error)
                 else:
-                    print(f"Ошибка OCR: {error}")
+                    print(f"Ошибка OCR: {error}", flush=True)
+            else:
+                with self._job_lock:
+                    self._job_pending = False
+                self._on_result(texts, total_time_ms)

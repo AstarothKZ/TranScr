@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environments and secrets
+.venv/
+venv/
+.env
+
+# Downloaded OCR/translation models
+models/
+
+# Generated screenshots and test output
+test/screenshots/*.png
