@@ -1,1 +1,1 @@
-"""Screen capture module."""
+

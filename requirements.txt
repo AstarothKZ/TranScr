@@ -1,17 +1,6 @@
-# Screen capture / hotkeys
+# Обязательные зависимости прототипа (Windows + захват + OCR + Google Translate)
 mss
 keyboard
 numpy
-
-# Windows OCR (Windows.Media.Ocr)
 winsdk>=1.0.0b10
-
-# Alternative OCR (heavy; runs on CPU in this MVP)
-paddleocr==3.7.0
-paddlepaddle==3.2.2
-
-# Online translation (unofficial Google Translate web client; internet required)
 googletrans==4.0.2
-
-# Offline translation engine; language models must be installed separately
-argostranslate==1.11.0
