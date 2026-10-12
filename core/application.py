@@ -94,6 +94,11 @@ class Application:
             print(f"Предупреждение при остановке OCR: {error}", flush=True)
 
         try:
+            self.translator.close()
+        except Exception as error:
+            print(f"Предупреждение при остановке переводчика: {error}", flush=True)
+
+        try:
             self.root.destroy()
         except tk.TclError:
             pass

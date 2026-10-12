@@ -2,6 +2,6 @@
 mss>=10.0.0
 keyboard>=0.13.5
 numpy>=1.24.0
-googletrans==4.0.2
+httpx>=0.27.2,<1
 python-dotenv>=1.0.0
 winsdk>=1.0.0b10; platform_system == "Windows"

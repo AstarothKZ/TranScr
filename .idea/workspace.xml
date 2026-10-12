@@ -7,15 +7,10 @@
     <list default="true" id="108e2c86-a32c-46e8-8438-67954f245938" name="Changes" comment="-">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/core/application.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/application.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/modules/ocr/ocr_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/modules/ocr/ocr_worker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/modules/translate/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/modules/translate/translator.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements-optional.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements-optional.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/translation/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/modules/translation/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/modules/translation/translator.py" beforeDir="false" afterPath="$PROJECT_DIR$/modules/translation/translator.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/screenshots/screenshot_2026-10-12_18-07-08_211203.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/screenshots/screenshot_2026-10-12_18-08-34_300808.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/screenshots/screenshot_2026-10-12_18-10-02_326903.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/test/screenshots/screenshot_2026-10-12_18-10-49_988825.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/test_translator.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/test_translator.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -305,7 +300,15 @@
       <option name="project" value="LOCAL" />
       <updated>1791817889194</updated>
     </task>
-    <option name="localTasksCounter" value="18" />
+    <task id="LOCAL-00018" summary="-">
+      <option name="closed" value="true" />
+      <created>1791819576469</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1791819576469</updated>
+    </task>
+    <option name="localTasksCounter" value="19" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

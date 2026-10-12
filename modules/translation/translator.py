@@ -1,23 +1,16 @@
-"""Простой переключаемый модуль перевода для TranScr.
+"""Translation manager: chooses a provider and keeps provider code independent."""
 
-Google Translate используется по умолчанию. Яндекс и Argos подключаются только
-при выборе соответствующего режима, поэтому их дополнительные библиотеки не
-мешают запуску базового прототипа.
-"""
-
-import asyncio
-import json
-import os
+from collections import OrderedDict
 from pathlib import Path
-from tkinter import filedialog, messagebox
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+from .argos import ArgosTranslateProvider
+from .google import GoogleTranslateProvider
+from .yandex import YandexTranslateProvider
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # .env необязателен; переменные среды тоже поддерживаются.
+except ImportError:  # .env is optional; environment variables are also supported.
     load_dotenv = None
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if load_dotenv is not None:
@@ -25,7 +18,7 @@ if load_dotenv is not None:
 
 
 class Translator:
-    """Выбирает движок перевода, не связывая его с OCR или захватом экрана."""
+    """Stable facade used by the application; OCR and capture know nothing about providers."""
 
     PROVIDERS = {
         "google": "Google Translate",
@@ -33,8 +26,7 @@ class Translator:
         "argos": "Argos Translate (офлайн)",
         "hybrid": "Гибридный режим (Google → Argos)",
     }
-
-    YANDEX_API_URL = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+    CACHE_SIZE = 64
 
     def __init__(
         self,
@@ -46,42 +38,57 @@ class Translator:
     ) -> None:
         if provider not in self.PROVIDERS:
             raise ValueError(f"Неизвестный переводчик: {provider}")
-
         self.from_code = from_code
         self.to_code = to_code
         self.root = root
         self.provider = provider
         self.timeout = timeout
+        self._cache: OrderedDict[tuple[str, str, str, str], str] = OrderedDict()
+        self._google_provider = None
+        self._yandex_provider = None
+        self._argos_provider = None
 
     def translate_text(self, text: str, provider: str | None = None) -> str:
-        """Переводит текст выбранным движком и возвращает готовую строку."""
+        """Translate to the configured target language; cache repeated OCR blocks."""
         text = text.strip()
         if not text:
             return ""
-
         selected = provider or self.provider
         if selected not in self.PROVIDERS:
             raise ValueError(f"Неизвестный переводчик: {selected}")
 
-        if selected == "google":
-            return self.translate_google(text)
-        if selected == "yandex":
-            return self.translate_yandex_cloud(text)
-        if selected == "argos":
-            return self.translate_argos(text)
+        key = (selected, self.from_code, self.to_code, text)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
 
-        # Гибрид: сначала онлайн-перевод, при сбое — установленная офлайн-модель.
+        translated = self._translate_with_provider(text, selected)
+        self._cache[key] = translated
+        self._cache.move_to_end(key)
+        while len(self._cache) > self.CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return translated
+
+    def _translate_with_provider(self, text: str, selected: str) -> str:
+        if selected == "google":
+            return self._google().translate(text)
+        if selected == "yandex":
+            return self._yandex().translate(text)
+        if selected == "argos":
+            return self._argos().translate(text)
+
+        # Hybrid: Google first, then the local Argos model if Google fails.
         try:
-            return self.translate_google(text)
+            return self._google().translate(text)
         except Exception as online_error:
             try:
-                translated = self.translate_argos(text)
+                result = self._argos().translate(text)
                 print(
-                    f"Google Translate недоступен; использован Argos. "
+                    "Google Translate недоступен; использован Argos. "
                     f"Причина: {type(online_error).__name__}",
                     flush=True,
                 )
-                return translated
+                return result
             except Exception as offline_error:
                 raise RuntimeError(
                     "Не удалось перевести текст через Google, а офлайн-перевод "
@@ -89,157 +96,38 @@ class Translator:
                     f"Google: {online_error}; Argos: {offline_error}"
                 ) from offline_error
 
-    def translate_google(self, text: str) -> str:
-        """Переводит через библиотеку googletrans (интернет нужен)."""
-        try:
-            from googletrans import Translator as GoogleTranslator
-        except ImportError as error:
-            raise RuntimeError(
-                "Google Translate не установлен. Выполните: "
-                "pip install -r requirements.txt"
-            ) from error
-
-        async def translate_async() -> str:
-            async with GoogleTranslator() as client:
-                result = await client.translate(
-                    text,
-                    src=self.from_code,
-                    dest=self.to_code,
-                )
-                return result.text
-
-        try:
-            return asyncio.run(translate_async())
-        except Exception as error:
-            raise RuntimeError(
-                f"Google Translate не сработал: {type(error).__name__}: {error}"
-            ) from error
-
-    def translate_yandex_cloud(self, text: str) -> str:
-        """Переводит через официальный REST API Yandex Cloud."""
-        api_key = os.getenv("YANDEX_API_KEY", "").strip()
-        folder_id = os.getenv("YC_FOLDER_ID", "").strip()
-        if not api_key or not folder_id:
-            raise RuntimeError(
-                "Для Яндекс-переводчика задайте YANDEX_API_KEY и YC_FOLDER_ID "
-                "в файле .env. Пример находится в .env.example."
+    def _google(self) -> GoogleTranslateProvider:
+        if self._google_provider is None:
+            self._google_provider = GoogleTranslateProvider(
+                self.from_code, self.to_code, self.timeout
             )
+        return self._google_provider
 
-        body = {
-            "folderId": folder_id,
-            "texts": [text],
-            "sourceLanguageCode": self.from_code,
-            "targetLanguageCode": self.to_code,
-        }
-        request = Request(
-            self.YANDEX_API_URL,
-            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Api-Key {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except HTTPError as error:
-            details = error.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"Yandex Cloud вернул HTTP {error.code}: {details}"
-            ) from error
-        except (URLError, TimeoutError, OSError) as error:
-            raise RuntimeError(f"Не удалось подключиться к Yandex Cloud: {error}") from error
-
-        translations = result.get("translations", [])
-        if not translations or not translations[0].get("text"):
-            raise RuntimeError("Yandex Cloud вернул пустой результат перевода.")
-        return translations[0]["text"]
-
-    def translate_argos(self, text: str) -> str:
-        """Переводит локально с помощью установленной модели Argos Translate."""
-        try:
-            import argostranslate.translate as argos_translate
-        except ImportError as error:
-            raise RuntimeError(
-                "Argos Translate не установлен. Для офлайн-перевода выполните: "
-                "pip install -r requirements-optional.txt"
-            ) from error
-
-        installed_languages = argos_translate.get_installed_languages()
-        source = next(
-            (language for language in installed_languages if language.code == self.from_code),
-            None,
-        )
-        if source is None:
-            raise RuntimeError(f"В Argos не установлен язык: {self.from_code}")
-
-        translation = next(
-            (
-                item
-                for item in source.translations_from
-                if item.to_lang.code == self.to_code
-            ),
-            None,
-        )
-        if translation is None:
-            raise RuntimeError(
-                f"В Argos не найдена модель {self.from_code} → {self.to_code}. "
-                "Установите соответствующий языковой пакет."
+    def _yandex(self) -> YandexTranslateProvider:
+        if self._yandex_provider is None:
+            self._yandex_provider = YandexTranslateProvider(
+                self.from_code, self.to_code, self.timeout
             )
-        return translation.translate(text)
+        return self._yandex_provider
+
+    def _argos(self) -> ArgosTranslateProvider:
+        if self._argos_provider is None:
+            self._argos_provider = ArgosTranslateProvider(
+                self.from_code, self.to_code, self.root
+            )
+        return self._argos_provider
+
+    def close(self) -> None:
+        """Close resources opened by translation providers."""
+        for provider in (self._google_provider, self._yandex_provider, self._argos_provider):
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
 
     def check_language(self) -> bool:
-        """Возвращает True, если модель Argos для текущей языковой пары установлена."""
-        try:
-            import argostranslate.translate as argos_translate
-        except ImportError:
-            return False
-
-        for language in argos_translate.get_installed_languages():
-            if language.code != self.from_code:
-                continue
-            return any(
-                item.to_lang.code == self.to_code
-                for item in language.translations_from
-            )
-        return False
+        """Return True when the Argos model for the selected language pair is installed."""
+        return self._argos().check_language()
 
     def manual_model_installation(self) -> bool:
-        """Предлагает выбрать локальный файл модели Argos (.argosmodel)."""
-        try:
-            import argostranslate.package
-        except ImportError:
-            print(
-                "Argos Translate не установлен. Выполните: "
-                "pip install -r requirements-optional.txt",
-                flush=True,
-            )
-            return False
-
-        accepted = messagebox.askyesno(
-            parent=self.root,
-            title="Установка офлайн-переводчика",
-            message="Выбрать файл языковой модели Argos (.argosmodel)?",
-        )
-        if not accepted:
-            return False
-
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Выберите языковую модель Argos",
-            filetypes=[("Языковые модели Argos", "*.argosmodel")],
-            initialdir=str(Path.home() / "Downloads"),
-        )
-        if not path:
-            return False
-
-        try:
-            argostranslate.package.install_from_path(path)
-        except Exception as error:
-            print(f"Не удалось установить модель Argos: {error}", flush=True)
-            return False
-
-        print("Модель Argos установлена.", flush=True)
-        return self.check_language()
+        """Offer the user to install an Argos model from a local .argosmodel file."""
+        return self._argos().manual_model_installation()
