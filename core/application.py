@@ -1,6 +1,5 @@
 import threading
 import time
-import textwrap
 from pathlib import Path
 from time import perf_counter
 import tkinter as tk
@@ -11,6 +10,8 @@ from modules.capture.screen_capture import ScreenCapturer
 from modules.ocr.ocr_worker import OCRWorker
 from modules.ocr.types import OCRText
 from modules.translation.translator import Translator
+from modules.overlay.screen_overlay import ScreenOverlay
+from modules.overlay.text_blocks import TextRegion, group_ocr_texts
 
 
 class Application:
@@ -44,6 +45,7 @@ class Application:
             on_error=self._on_ocr_error,
         )
         self.screen_capturer = ScreenCapturer(screenshot_dir)
+        self.overlay = ScreenOverlay(self.root)
         self.translator = Translator(
             root=self.root,
             from_code="en",
@@ -89,6 +91,11 @@ class Application:
                     pass
 
         try:
+            self.overlay.close()
+        except Exception as error:
+            print(f"Предупреждение при закрытии оверлея: {error}", flush=True)
+
+        try:
             self.ocr_worker.close(timeout=5)
         except Exception as error:
             print(f"Предупреждение при остановке OCR: {error}", flush=True)
@@ -112,6 +119,10 @@ class Application:
 
     def capture(self) -> tuple[list[OCRText] | None, str | None]:
         try:
+            # Never recognize our own translated text on the next capture.
+            self.overlay.clear()
+            self.root.update_idletasks()
+            self.root.update()
             image, path = self.screen_capturer.capture_full_screen()
             print(f"Скриншот сохранён: {path}", flush=True)
 
@@ -157,11 +168,11 @@ class Application:
             return None, None
 
     def translate(self) -> None:
-        _, source_text = self.capture()
-        if not source_text:
+        texts, source_text = self.capture()
+        if not source_text or not texts:
             return
 
-        # Установка Argos нужна только при явном выборе офлайн-переводчика.
+        # Argos model installation is needed only for explicit offline mode.
         if self.translator.provider == "argos" and not self.translator.check_language():
             try:
                 self.root.deiconify()
@@ -176,14 +187,40 @@ class Application:
                 print("Модель Argos не установлена — перевод невозможен.", flush=True)
                 return
 
-        try:
-            translated = self.translator.translate_text(source_text)
-        except Exception as error:
-            print(f"Ошибка перевода: {type(error).__name__}: {error}", flush=True)
-            return
+        regions = group_ocr_texts(texts)
+        translated_regions: list[tuple[TextRegion, str]] = []
+        translated_for_console: list[str] = []
 
         print("Перевод на русский:", flush=True)
-        print(textwrap.fill(translated, width=100), flush=True)
+        for region in regions:
+            # Keep numeric-only labels untouched and avoid an unnecessary API call.
+            if not any(character.isalpha() for character in region.text):
+                continue
+            try:
+                translated = self.translator.translate_text(region.text).strip()
+            except Exception as error:
+                print(
+                    f"Ошибка перевода блока [{region.left}, {region.top}]: "
+                    f"{type(error).__name__}: {error}",
+                    flush=True,
+                )
+                continue
+            if not translated:
+                continue
+            translated_regions.append((region, translated))
+            translated_for_console.append(translated)
+
+        if translated_for_console:
+            print("\n\n".join(translated_for_console), flush=True)
+            try:
+                self.overlay.show(
+                    translated_regions,
+                    self.screen_capturer.last_bounds,
+                )
+            except Exception as error:
+                print(f"Не удалось показать оверлей: {type(error).__name__}: {error}", flush=True)
+        else:
+            print("Перевод не получен; оверлей оставлен пустым.", flush=True)
 
     def _on_ocr_result(self, texts: list[OCRText], total_time_ms: float) -> None:
         self._ocr_texts = texts

@@ -12,6 +12,8 @@ class ScreenCapturer:
     def __init__(self, output_dir: Path) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Virtual desktop coordinates: left, top, width, height.
+        self.last_bounds: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     def capture_full_screen(self) -> tuple[np.ndarray, Path]:
         """Захватывает все мониторы и сохраняет PNG как тестовый артефакт."""
@@ -21,6 +23,12 @@ class ScreenCapturer:
         with mss.mss() as sct:
             monitor = sct.monitors[0]
             screenshot = sct.grab(monitor)
+            self.last_bounds = (
+                int(monitor["left"]),
+                int(monitor["top"]),
+                int(screenshot.width),
+                int(screenshot.height),
+            )
             image = np.frombuffer(
                 screenshot.rgb,
                 dtype=np.uint8,
