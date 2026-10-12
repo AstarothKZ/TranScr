@@ -1,10 +1,11 @@
-"""Translation manager: chooses a provider and keeps provider code independent."""
+"""Translation manager: provider selection, routing and a small in-memory cache."""
 
 from collections import OrderedDict
 from pathlib import Path
 
 from .argos import ArgosTranslateProvider
-from .google import GoogleTranslateProvider
+from .baidu import BaiduTranslateProvider
+from .mymemory import MyMemoryTranslateProvider
 from .yandex import YandexTranslateProvider
 
 try:
@@ -21,10 +22,11 @@ class Translator:
     """Stable facade used by the application; OCR and capture know nothing about providers."""
 
     PROVIDERS = {
-        "google": "Google Translate",
-        "yandex": "Yandex Cloud Translate",
+        "mymemory": "MyMemory (онлайн, без API-ключа)",
+        "baidu": "Baidu Translate (онлайн, нужны API-данные)",
+        "yandex": "Yandex Cloud Translate (онлайн, нужны API-данные)",
         "argos": "Argos Translate (офлайн)",
-        "hybrid": "Гибридный режим (Google → Argos)",
+        "hybrid": "Гибридный режим (MyMemory → Argos)",
     }
     CACHE_SIZE = 64
 
@@ -33,7 +35,7 @@ class Translator:
         from_code: str = "en",
         to_code: str = "ru",
         root=None,
-        provider: str = "google",
+        provider: str = "mymemory",
         timeout: float = 15.0,
     ) -> None:
         if provider not in self.PROVIDERS:
@@ -44,7 +46,8 @@ class Translator:
         self.provider = provider
         self.timeout = timeout
         self._cache: OrderedDict[tuple[str, str, str, str], str] = OrderedDict()
-        self._google_provider = None
+        self._mymemory_provider = None
+        self._baidu_provider = None
         self._yandex_provider = None
         self._argos_provider = None
 
@@ -70,38 +73,47 @@ class Translator:
         return translated
 
     def _translate_with_provider(self, text: str, selected: str) -> str:
-        if selected == "google":
-            return self._google().translate(text)
+        if selected == "mymemory":
+            return self._mymemory().translate(text)
+        if selected == "baidu":
+            return self._baidu().translate(text)
         if selected == "yandex":
             return self._yandex().translate(text)
         if selected == "argos":
             return self._argos().translate(text)
 
-        # Hybrid: Google first, then the local Argos model if Google fails.
+        # Hybrid mode falls back to the local Argos model only when online service fails.
         try:
-            return self._google().translate(text)
+            return self._mymemory().translate(text)
         except Exception as online_error:
             try:
                 result = self._argos().translate(text)
                 print(
-                    "Google Translate недоступен; использован Argos. "
+                    "MyMemory недоступен; использован Argos. "
                     f"Причина: {type(online_error).__name__}",
                     flush=True,
                 )
                 return result
             except Exception as offline_error:
                 raise RuntimeError(
-                    "Не удалось перевести текст через Google, а офлайн-перевод "
+                    "Не удалось перевести текст через MyMemory, а офлайн-перевод "
                     "Argos недоступен. Проверьте интернет и установку модели Argos. "
-                    f"Google: {online_error}; Argos: {offline_error}"
+                    f"MyMemory: {online_error}; Argos: {offline_error}"
                 ) from offline_error
 
-    def _google(self) -> GoogleTranslateProvider:
-        if self._google_provider is None:
-            self._google_provider = GoogleTranslateProvider(
+    def _mymemory(self) -> MyMemoryTranslateProvider:
+        if self._mymemory_provider is None:
+            self._mymemory_provider = MyMemoryTranslateProvider(
                 self.from_code, self.to_code, self.timeout
             )
-        return self._google_provider
+        return self._mymemory_provider
+
+    def _baidu(self) -> BaiduTranslateProvider:
+        if self._baidu_provider is None:
+            self._baidu_provider = BaiduTranslateProvider(
+                self.from_code, self.to_code, self.timeout
+            )
+        return self._baidu_provider
 
     def _yandex(self) -> YandexTranslateProvider:
         if self._yandex_provider is None:
@@ -119,7 +131,12 @@ class Translator:
 
     def close(self) -> None:
         """Close resources opened by translation providers."""
-        for provider in (self._google_provider, self._yandex_provider, self._argos_provider):
+        for provider in (
+            self._mymemory_provider,
+            self._baidu_provider,
+            self._yandex_provider,
+            self._argos_provider,
+        ):
             close = getattr(provider, "close", None)
             if callable(close):
                 close()

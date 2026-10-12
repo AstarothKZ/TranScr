@@ -48,7 +48,7 @@ class Application:
             root=self.root,
             from_code="en",
             to_code="ru",
-            provider="google",
+            provider="mymemory",
         )
 
         self.hotkey_handle = None
@@ -220,13 +220,20 @@ class Application:
     def _select_translator(self) -> str:
         print()
         print("Выберите переводчик:")
-        print("1 — Google Translate (по умолчанию, нужен интернет)")
-        print("2 — Yandex Cloud Translate (нужны ключ API и ID каталога)")
-        print("3 — Argos Translate (офлайн, нужен пакет и языковая модель)")
-        print("4 — Гибридный режим (Google, затем Argos при сбое)")
-        choices = {"1": "google", "2": "yandex", "3": "argos", "4": "hybrid"}
+        print("1 — MyMemory (по умолчанию, без API-ключа; есть лимит)")
+        print("2 — Baidu Translate (онлайн, нужны APP ID и API-ключ)")
+        print("3 — Yandex Cloud Translate (нужны ключ API и ID каталога)")
+        print("4 — Argos Translate (офлайн, нужен пакет и языковая модель)")
+        print("5 — Гибридный режим (MyMemory, затем Argos при сбое)")
+        choices = {
+            "1": "mymemory",
+            "2": "baidu",
+            "3": "yandex",
+            "4": "argos",
+            "5": "hybrid",
+        }
         while True:
             choice = input("Ваш выбор [1]: ").strip() or "1"
             if choice in choices:
                 return choices[choice]
-            print("Введите число от 1 до 4.")
+            print("Введите число от 1 до 5.")
