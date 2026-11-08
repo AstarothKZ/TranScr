@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.idea/
+.env
+!.env.example
+.transcr_settings.json
+test/
+.pytest_cache/
+.ruff_cache/
+
+logs/

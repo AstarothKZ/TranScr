@@ -1,0 +1,7 @@
+"""Provider metadata shared by configuration, facade and settings UI."""
+
+PROVIDER_LABELS = {
+    "mymemory": "MyMemory — онлайн (без API-ключа)",
+    "yandex": "Yandex Cloud — онлайн (API-ключ)",
+    "argos": "Argos — офлайн",
+}
