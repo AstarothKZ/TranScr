@@ -2,22 +2,13 @@
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from modules.ocr.types import OCRText
 from modules.overlay.layout import fit_region
+from modules.overlay.fonts import PixelFont
+from modules.overlay.rendering import render_row
 from modules.text_processing.text_regions import TextRegion
-
-
-class Font:
-    def __init__(self, size):
-        self.font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", size)
-
-    def measure(self, text):
-        return self.font.getlength(text)
-
-    def metrics(self, name):
-        return sum(self.font.getmetrics())
 
 
 def main():
@@ -32,7 +23,7 @@ def main():
         region = TextRegion(
             "original", offset, 70, offset + max(widths), 305, 26, lines
         )
-        plan = fit_region(region, text, Font)
+        plan = fit_region(region, text, PixelFont)
         assert len(plan) == len(lines)
         for row in plan:
             line = row.source
@@ -41,9 +32,8 @@ def main():
                 fill="white",
                 outline="#007c91",
             )
-            for x, y, value in row.runs:
-                # Pillow's left-ascender anchor corresponds to the measured line box.
-                draw.text((x, y), value, font=row.font.font, fill="black", anchor="lt")
+            layer = render_row(row, 'black')
+            image.paste(layer, (line.left, line.top), layer)
     output = Path("test/line_layout_preview.png")
     output.parent.mkdir(exist_ok=True)
     image.save(output)

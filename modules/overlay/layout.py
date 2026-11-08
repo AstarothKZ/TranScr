@@ -1,8 +1,7 @@
 """Measured line-bound layout, independent of Tk windows and native handles."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from statistics import median
 from typing import Any
 

@@ -1,6 +1,6 @@
 import unittest
 
-from modules.text_processing.filters import should_translate
+from modules.text_processing.filters import should_translate, untranslated_fragments
 
 
 class ResolutionFilterTests(unittest.TestCase):
@@ -10,9 +10,6 @@ class ResolutionFilterTests(unittest.TestCase):
                 self.assertFalse(should_translate(value))
         self.assertTrue(should_translate('Connect your PC'))
         self.assertTrue(should_translate('Image size is 1080 x 1523'))
-
-from modules.text_processing.filters import should_translate, untranslated_fragments
-
 
 class FilterTests(unittest.TestCase):
     def test_sizes_and_transfer_rates_are_not_sent(self):

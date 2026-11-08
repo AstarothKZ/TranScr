@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 
 from modules.overlay.fonts import PixelFont
 from modules.overlay.layout import fit_region
+from modules.overlay.rendering import render_row
 from modules.text_processing.text_regions import TextRegion
 
 
@@ -31,3 +32,5 @@ class PixelClippingTests(unittest.TestCase):
                     self.assertGreaterEqual(bounds[1], margin)
                     self.assertLessEqual(bounds[2], margin+400)
                     self.assertLessEqual(bounds[3], margin+height)
+                    expected = image.crop((margin, margin, margin+400, margin+height))
+                    self.assertEqual(render_row(row, 'black').tobytes(), expected.tobytes())

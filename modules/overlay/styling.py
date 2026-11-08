@@ -1,8 +1,7 @@
 """Conservative casing and initial visual font-weight estimation."""
 import re
 import numpy as np
-from PIL import ImageFont
-from modules.overlay.fonts import font_path
+from modules.overlay.fonts import load_font
 
 
 def strengthen_color(text_color, background_color):
@@ -54,7 +53,7 @@ def estimate_bold(image, region):
         density = mask[yy.min():yy.max()+1, xx.min():xx.max()+1].mean()
         refs = []
         for bold in (False, True):
-            font = ImageFont.truetype(str(font_path(bold)), max(8, line.bottom-line.top))
+            font = load_font(max(8, line.bottom-line.top), bold)
             glyphs = np.array(font.getmask(line.text), dtype=np.uint8)
             refs.append(float((glyphs > 100).mean()) if glyphs.size else 0)
         if refs[1] > refs[0]:

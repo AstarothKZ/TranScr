@@ -4,13 +4,13 @@ import ctypes
 import logging
 import os
 import tkinter as tk
-import tkinter.font as tkfont
 from dataclasses import replace
 
-from PIL import ImageTk, Image, ImageDraw
+from PIL import ImageTk
 from modules.overlay.fonts import PixelFont
 from modules.overlay.styling import preserve_case, estimate_bold, strengthen_color
 from modules.overlay.background import prepare_background
+from modules.overlay.rendering import render_row
 
 from modules.text_processing.text_regions import layout_slots, separate_row_overlaps
 
@@ -40,7 +40,6 @@ class ScreenOverlay:
             relief="flat",
         )
         self.canvas.pack(fill="both", expand=True)
-        self._fonts: list[tkfont.Font] = []
         self._images = []
         self._closed = False
 
@@ -50,7 +49,6 @@ class ScreenOverlay:
             return
         self.window.withdraw()
         self.canvas.delete("all")
-        self._fonts.clear()
         self._images = []
 
     def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None) -> None:
@@ -140,7 +138,6 @@ class ScreenOverlay:
                 continue
             accepted.extend(plan)
             occupied.extend(boxes)
-            self._fonts.extend(row.font for row in plan)
         text_colors = {}
         for row in accepted:
             line = row.source
@@ -157,27 +154,9 @@ class ScreenOverlay:
                 color = style.color if style else self.BOX_COLOR
                 self.canvas.create_rectangle(*box, fill=color, outline=color, width=0)
         for row in accepted:
-            if isinstance(row.font, PixelFont):
-                line = row.source
-                layer = Image.new('RGBA', (line.right-line.left, line.bottom-line.top))
-                draw = ImageDraw.Draw(layer)
-                for x, y, value in row.runs:
-                    draw.text((x-line.left, y-line.top-row.ink_top), value,
-                              font=row.font.font, fill=text_colors[id(row)], anchor='la')
-                photo = ImageTk.PhotoImage(layer, master=self.window)
-                self._images.append(photo)
-                self.canvas.create_image(line.left, line.top, anchor='nw', image=photo)
-                continue
-            for x, y, value in row.runs:
-                self.canvas.create_text(
-                    x,
-                    y,
-                    anchor="nw",
-                    text=value,
-                    fill=text_colors[id(row)],
-                    font=row.font,
-                    tags=("translated_text",),
-                )
+            photo = ImageTk.PhotoImage(render_row(row, text_colors[id(row)]), master=self.window)
+            self._images.append(photo)
+            self.canvas.create_image(row.source.left, row.source.top, anchor='nw', image=photo)
         if not accepted:
             return
         if not self._enable_click_through() or not self._set_native_window_bounds(
@@ -209,7 +188,6 @@ class ScreenOverlay:
         if self._closed:
             return
         self._closed = True
-        self._fonts.clear()
         self._images = []
         try:
             self.window.destroy()

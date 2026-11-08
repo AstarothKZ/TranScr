@@ -2,7 +2,7 @@
 from dataclasses import replace
 import re
 import numpy as np
-from modules.text_processing.filters import _UI_LABELS, _CONTACT
+from modules.text_processing.filters import is_contact_address, is_ui_label
 
 
 def _components(mask):
@@ -87,7 +87,7 @@ def prepare_lines(image, lines):
     result = []
     for line in sorted(lines, key=lambda item: (item.top, item.left)):
         # Known UI tokens must not be merged with their neighbouring labels.
-        if line.text.strip(' [](){}|·•:;.').upper() in _UI_LABELS:
+        if is_ui_label(line.text):
             continue
         line = refine_box(image, line, lines)
         text = re.sub(r'^[»›》>]+\s*', '', line.text)
@@ -128,17 +128,16 @@ def prepare_lines(image, lines):
     # width above their address instead of shrinking each caption to the width
     # of its original English words. Expand only across uniform empty pixels.
     captions = []
+    contacts = [line for line in result if is_contact_address(line.text)]
     for i, line in enumerate(result):
-        if not line.text or _CONTACT.fullmatch(line.text.strip()):
+        if not line.text or is_contact_address(line.text):
             continue
-        below = [other for other in result if _CONTACT.fullmatch(other.text.strip())
-                 and abs(other.left-line.left) <= 6
-                 and 0 <= other.top-line.bottom <= (line.bottom-line.top)*1.5]
+        column = [other for other in contacts if abs(other.left-line.left) <= 6]
+        below = [other for other in column
+                 if 0 <= other.top-line.bottom <= (line.bottom-line.top)*1.5]
         if not below:
             continue
-        right = max([line.right] + [other.right for other in result
-                    if _CONTACT.fullmatch(other.text.strip())
-                    and abs(other.left-line.left) <= 6])
+        right = max([line.right] + [other.right for other in column])
         extra = image[line.top:line.bottom, line.right:right, :3]
         if extra.size and np.max(np.ptp(extra.reshape(-1,3), axis=0)) > 6:
             continue

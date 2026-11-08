@@ -1,7 +1,7 @@
+"""Match hotkeys against the event stream, without keyboard.is_pressed races."""
+
 import ctypes
 import os
-
-"""Match hotkeys against the event stream, without keyboard.is_pressed races."""
 
 
 def modifier_is_down(name):

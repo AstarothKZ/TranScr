@@ -8,6 +8,9 @@ def recover_labels(image, lines, recognize):
     output = []
     replaced = []
     for line in lines:
+        if any(a <= (line.left+line.right)/2 <= c
+               and b <= (line.top+line.bottom)/2 <= d for a,b,c,d in replaced):
+            continue
         h = line.bottom-line.top
         if h < 6 or line.right-line.left < h*18:
             continue

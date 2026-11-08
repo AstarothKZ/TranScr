@@ -50,6 +50,14 @@ _LATIN_PHRASE = re.compile(
 )
 
 
+def is_contact_address(text: str) -> bool:
+    return _CONTACT.fullmatch(text.strip()) is not None
+
+
+def is_ui_label(text: str) -> bool:
+    return text.strip(' [](){}|·•:;.').upper() in _UI_LABELS
+
+
 def untranslated_fragments(text: str) -> list[tuple[int, int]]:
     """Conservative candidates in a mixed Russian/English service response.
 
@@ -74,7 +82,7 @@ def should_translate(text: str) -> bool:
     code embedded inside a meaningful sentence, such as ``The A-4SU entered``.
     """
     value = " ".join((text or "").split()).strip()
-    if _CONTACT.fullmatch(value):
+    if is_contact_address(value):
         return False
     # Filename/status labels are often returned as one OCR line by Paddle.
     label = unicodedata.normalize('NFKC', value).strip(' [](){}|·•:;')
@@ -85,7 +93,7 @@ def should_translate(text: str) -> bool:
     if len(''.join(c for c in value if c.isalnum())) <= 3:
         return False
 
-    if value.strip(" .;:").upper() in _UI_LABELS:
+    if is_ui_label(value):
         return False
     if _NUMBERS_AND_SEPARATORS.fullmatch(value):
         return False

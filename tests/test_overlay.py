@@ -6,22 +6,8 @@ from modules.overlay.screen_overlay import ScreenOverlay
 from modules.text_processing.text_regions import TextRegion
 
 
-class FakeFont:
-    """Intentionally has no destroy(), just like tkinter.font.Font."""
-
-    def __init__(self, **kwargs):
-        pass
-
-    def measure(self, text):
-        return len(text) * 10
-
-    def metrics(self, name):
-        return 8
-
-
 @patch('modules.overlay.screen_overlay.ImageTk.PhotoImage', Mock())
 class OverlayTests(unittest.TestCase):
-    @patch("modules.overlay.screen_overlay.tkfont.Font", FakeFont)
     def test_small_overlap_between_regions_does_not_drop_whole_block(self):
         overlay = self.overlay()
         first = OCRText("first", 0, 0, 100, 20)
@@ -42,14 +28,12 @@ class OverlayTests(unittest.TestCase):
     def overlay(self):
         overlay = ScreenOverlay.__new__(ScreenOverlay)
         overlay._closed = False
-        overlay._fonts = []
         overlay.window = Mock()
         overlay.canvas = Mock()
         overlay._enable_click_through = Mock(return_value=True)
         overlay._set_native_window_bounds = Mock(return_value=True)
         return overlay
 
-    @patch("modules.overlay.screen_overlay.tkfont.Font", FakeFont)
     def test_unfittable_text_does_not_crash(self):
         overlay = self.overlay()
         overlay.show(
@@ -58,7 +42,6 @@ class OverlayTests(unittest.TestCase):
         )
         overlay.canvas.create_rectangle.assert_not_called()
 
-    @patch("modules.overlay.screen_overlay.tkfont.Font", FakeFont)
     def test_overlapping_regions_do_not_crash(self):
         overlay = self.overlay()
         overlay.show(

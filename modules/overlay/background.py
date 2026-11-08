@@ -144,7 +144,6 @@ def prepare_background(frame: np.ndarray, box: tuple[int, int, int, int]) -> Bac
         # Dense display headings on paper leave letter-shaped smooth islands
         # if only the ink is repaired. Rebuild the whole smooth surface using
         # its fitted gradient and measured paper grain, without glyph outlines.
-        surface = plane if plane is not None else np.broadcast_to(bg, context.shape)
         smoothed = np.asarray(Image.fromarray(context).filter(ImageFilter.GaussianBlur(1)), dtype=float)
         safe = np.asarray(Image.fromarray((usable * 255).astype(np.uint8)).filter(ImageFilter.MinFilter(5))) > 0
         residual = (context.astype(float) - smoothed)[safe]

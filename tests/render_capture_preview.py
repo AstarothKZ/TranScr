@@ -10,11 +10,12 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from modules.ocr.types import OCRText
 from modules.overlay.background import prepare_background
 from modules.overlay.layout import fit_region
+from modules.overlay.rendering import render_row
 from modules.text_processing.text_regions import group_ocr_texts
 from modules.overlay.fonts import PixelFont as Font
 from modules.overlay.styling import preserve_case, estimate_bold, strengthen_color
@@ -59,10 +60,9 @@ def main():
             style = prepare_background(frame, box)
             output.paste(style.patch or Image.new("RGB", (box[2]-box[0], box[3]-box[1]), style.color), box)
             plans.append((row, strengthen_color(style.text_color, style.color)))
-    draw = ImageDraw.Draw(output)
     for row, color in plans:
-        for x, y, value in row.runs:
-            draw.text((x, y-row.ink_top), value, font=row.font.font, fill=color, anchor="la")
+        layer = render_row(row, color)
+        output.paste(layer, (row.source.left, row.source.top), layer)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     output.save(args.output)
     print(f"{len(plans)} rows; {(perf_counter()-started)*1000:.1f} ms; {args.output.resolve()}")
