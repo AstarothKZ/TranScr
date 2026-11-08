@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 import unittest
+import numpy as np
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -26,7 +27,6 @@ class PaddleGeometryTests(unittest.TestCase):
         self.assertEqual(
             package.PaddleOCR.call_args.kwargs["text_det_unclip_ratio"], 1.0
         )
-        import numpy as np
         lines = adapter.recognize(np.zeros((1100, 800, 3), dtype=np.uint8))
         self.assertEqual(len(lines), 27)
         heading = next(line for line in lines if line.text.startswith("is very"))

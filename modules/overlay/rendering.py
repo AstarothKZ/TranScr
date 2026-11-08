@@ -4,9 +4,17 @@ from PIL import Image, ImageDraw
 
 def render_row(row, color):
     line = row.source
-    layer = Image.new('RGBA', (line.right-line.left, line.bottom-line.top))
+    width, height = line.right-line.left, line.bottom-line.top
+    margin = max(16, row.font.size*2)
+    layer = Image.new('RGBA', (width+margin*2, height+margin*2))
     draw = ImageDraw.Draw(layer)
     for x, y, value in row.runs:
-        draw.text((x-line.left, y-line.top-row.ink_top), value,
+        draw.text((margin+x-line.left, margin+y-line.top-row.ink_top), value,
                   font=row.font.font, fill=color, anchor='la')
-    return layer
+    bounds = layer.getbbox()
+    if row.text.strip() and bounds is None:
+        raise ValueError('Translation has no visible pixels')
+    if bounds is not None and (bounds[0]<margin or bounds[1]<margin
+                              or bounds[2]>margin+width or bounds[3]>margin+height):
+        raise ValueError('Translation pixels extend outside the source row')
+    return layer.crop((margin,margin,margin+width,margin+height))

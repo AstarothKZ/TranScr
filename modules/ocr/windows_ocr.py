@@ -70,7 +70,8 @@ class WindowsOCRModule:
             )
         if _split_labels:
             from modules.ocr.labels import recover_labels
-            return recover_labels(image, texts, lambda crop: self.recognize(crop, _split_labels=False))
+            recognize = lambda crop: self.recognize(crop, _split_labels=False)
+            return recover_labels(image, texts, recognize)
         return texts
 
     async def _recognize_async(self, bitmap: SoftwareBitmap) -> Any:

@@ -12,6 +12,7 @@ from modules.text_processing.filters import untranslated_fragments
 
 from .argos import ArgosTranslateProvider
 from .catalog import PROVIDER_LABELS
+from .google import GoogleTranslateError, GoogleTranslateProvider
 from .mymemory import MyMemoryTranslateProvider
 from .yandex import YandexTranslateProvider
 
@@ -67,6 +68,7 @@ class Translator:
         self._provider_lock = RLock()
         self._argos_translation_lock = RLock()
         self._mymemory_provider = None
+        self._google_provider = None
         self._yandex_provider = None
         self._argos_provider = None
         self._executor = ThreadPoolExecutor(
@@ -125,7 +127,7 @@ class Translator:
             except Exception as error:
                 cause = error
                 while cause is not None:
-                    if isinstance(cause, httpx.TransportError) or (
+                    if isinstance(cause, (httpx.TransportError, GoogleTranslateError)) or (
                         isinstance(cause, httpx.HTTPStatusError)
                         and (
                             cause.response.status_code in {401, 403, 429}
@@ -277,6 +279,8 @@ class Translator:
         return result
 
     def _provider_translate(self, text: str, selected: str) -> str:
+        if selected == "google":
+            return self._google().translate(text)
         if selected == "mymemory":
             return self._mymemory().translate(text)
         if selected == "yandex":
@@ -287,6 +291,14 @@ class Translator:
             with self._argos_translation_lock:
                 return self._argos().translate(text)
         raise ValueError(f"Неизвестный переводчик: {selected}")
+
+    def _google(self) -> GoogleTranslateProvider:
+        with self._provider_lock:
+            if self._google_provider is None:
+                self._google_provider = GoogleTranslateProvider(
+                    self.from_code, self.to_code, self.timeout
+                )
+            return self._google_provider
 
     def _mymemory(self) -> MyMemoryTranslateProvider:
         with self._provider_lock:
@@ -316,6 +328,7 @@ class Translator:
         """Close resources opened by translation providers."""
         self._executor.shutdown(wait=True, cancel_futures=True)
         for provider in (
+            self._google_provider,
             self._mymemory_provider,
             self._yandex_provider,
             self._argos_provider,

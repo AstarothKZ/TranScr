@@ -63,6 +63,8 @@ class ScreenOverlay:
         self.window.update_idletasks()
         occupied = []
         accepted = []
+        prepared_layers = {}
+        prepared_styles = {}
         fonts = {}
 
         def make_font(size):
@@ -136,16 +138,29 @@ class ScreenOverlay:
                     region.top,
                 )
                 continue
+            # Prepare and validate the whole block before changing any source
+            # pixels. Rendering errors must never leave a background-only box.
+            region_layers = {}
+            region_styles = {}
+            try:
+                for row, box in zip(plan, boxes):
+                    style = backgrounds.get(box) if backgrounds is not None else None
+                    if style is None and source_image is not None:
+                        style = prepare_background(source_image, box)
+                    color = strengthen_color(style.text_color, style.color) if style else self.TEXT_COLOR
+                    region_layers[id(row)] = render_row(row, color)
+                    region_styles[id(row)] = style
+            except (ValueError, OSError) as error:
+                LOGGER.warning('Оверлей сохранил исходный блок (%s, %s): %s',region.left,region.top,error)
+                continue
+            prepared_layers.update(region_layers)
+            prepared_styles.update(region_styles)
             accepted.extend(plan)
             occupied.extend(boxes)
-        text_colors = {}
         for row in accepted:
             line = row.source
             box = (line.left, line.top, line.right, line.bottom)
-            style = backgrounds.get(box) if backgrounds is not None else None
-            if style is None and source_image is not None:
-                style = prepare_background(source_image, box)
-            text_colors[id(row)] = strengthen_color(style.text_color, style.color) if style else self.TEXT_COLOR
+            style = prepared_styles[id(row)]
             if style is not None and style.patch is not None:
                 photo = ImageTk.PhotoImage(style.patch, master=self.window)
                 self._images.append(photo)
@@ -154,7 +169,7 @@ class ScreenOverlay:
                 color = style.color if style else self.BOX_COLOR
                 self.canvas.create_rectangle(*box, fill=color, outline=color, width=0)
         for row in accepted:
-            photo = ImageTk.PhotoImage(render_row(row, text_colors[id(row)]), master=self.window)
+            photo = ImageTk.PhotoImage(prepared_layers[id(row)], master=self.window)
             self._images.append(photo)
             self.canvas.create_image(row.source.left, row.source.top, anchor='nw', image=photo)
         if not accepted:

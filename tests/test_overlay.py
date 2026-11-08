@@ -8,6 +8,24 @@ from modules.text_processing.text_regions import TextRegion
 
 @patch('modules.overlay.screen_overlay.ImageTk.PhotoImage', Mock())
 class OverlayTests(unittest.TestCase):
+    @patch('modules.overlay.screen_overlay.render_row', side_effect=ValueError('clipped text'))
+    def test_failed_text_render_never_paints_source_background(self, render):
+        overlay = self.overlay()
+        overlay.show([(TextRegion('Original',0,0,200,24,16),'Перевод')], (0,0,300,100))
+        overlay.canvas.create_rectangle.assert_not_called()
+        overlay.canvas.create_image.assert_not_called()
+
+    @patch('modules.overlay.screen_overlay.render_row')
+    def test_whole_region_is_kept_if_one_row_fails(self, render):
+        from PIL import Image
+        render.side_effect = [Image.new('RGBA',(200,24),'black'), ValueError('missing text')]
+        overlay = self.overlay()
+        lines = (OCRText('First row',0,0,200,24),OCRText('Second row',0,28,200,52))
+        region = TextRegion('First row\nSecond row',0,0,200,52,16,lines)
+        overlay.show([(region,'Первое предложение и вторая строка текста')],(0,0,300,100))
+        overlay.canvas.create_rectangle.assert_not_called()
+        overlay.canvas.create_image.assert_not_called()
+
     def test_small_overlap_between_regions_does_not_drop_whole_block(self):
         overlay = self.overlay()
         first = OCRText("first", 0, 0, 100, 20)

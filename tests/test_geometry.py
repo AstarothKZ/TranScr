@@ -6,6 +6,14 @@ from modules.text_processing.filters import should_translate
 
 
 class GeometryTests(unittest.TestCase):
+    def test_tinted_black_letter_is_not_removed_as_orange_marker(self):
+        image=np.full((50,140,3), [190,175,145], dtype=np.uint8)
+        image[8:35,8:25]=[55,43,29]
+        image[8:35,40:110]=[35,32,29]
+        line=prepare_lines(image,[OCRText("Saab's",5,4,115,40)])[0]
+        self.assertLessEqual(line.left,8)
+        self.assertGreaterEqual(line.right,110)
+
     def test_red_games_is_text_not_a_decorative_marker(self):
         image = np.full((45, 100, 3), 255, dtype=np.uint8)
         for x in range(10, 65, 10):

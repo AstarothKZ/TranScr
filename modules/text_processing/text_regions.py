@@ -24,6 +24,7 @@ class TextRegion:
     bottom: int
     font_size: int
     lines: tuple[OCRText, ...] = ()
+    alignment_hint: str | None = None
 
     @property
     def width(self) -> int:
@@ -35,26 +36,36 @@ class TextRegion:
 
     @property
     def looks_justified(self) -> bool:
-        """Return True only for a stable left edge and similarly long body lines."""
+        """Recognize stable column edges despite indents and incomplete OCR rows."""
         if len(self.lines) < 2:
             return False
         ordered = sorted(self.lines, key=lambda line: (line.top, line.left))
         heights = [max(1, line.bottom - line.top) for line in ordered]
         tolerance = max(3, round(median(heights) * 0.55))
-        body = ordered[1:]  # Allow a first-line paragraph indent.
-        if (
-            max(line.left for line in body) - min(line.left for line in body)
-            > tolerance
-        ):
+        if len(ordered) == 2 and abs(ordered[0].left-ordered[1].left) > tolerance:
             return False
-        # A justified paragraph normally has a short final line; ignore it.
-        widths = [max(1, line.right - line.left) for line in ordered[:-1]]
-        widest = max(widths, default=1)
-        return widest >= 20 and min(widths, default=1) >= widest * 0.86
+        body = ordered[:-1] if len(ordered) > 2 else ordered[:1]
+        widths = sorted(line.right-line.left for line in body)
+        reference = median(widths[len(widths)//2:])
+        if reference < 20:
+            return False
+        # A few missed initial words must not turn a whole column into a
+        # right-aligned paragraph. Look at the repeated full-width rows.
+        full = [line for line in body if line.right-line.left >= reference*.90]
+        if len(full) < max(1, len(body)*.60):
+            return False
+        left = median(line.left for line in full)
+        right = median(line.right for line in full)
+        stable = sum((abs(line.left-left) <= tolerance or
+                      (line is ordered[0] and 0 <= line.left-left <= median(heights)*2))
+                     and abs(line.right-right) <= tolerance for line in full)
+        return stable >= len(full)*.75
 
     @property
     def alignment(self) -> str:
         """Estimate source alignment from repeated line geometry."""
+        if self.alignment_hint is not None:
+            return self.alignment_hint
         if self.looks_justified:
             return "justify"
         if len(self.lines) < 2:
@@ -62,12 +73,8 @@ class TextRegion:
         ordered = sorted(self.lines, key=lambda line: (line.top, line.left))
         heights = [max(1, line.bottom - line.top) for line in ordered]
         tolerance = max(3, round(median(heights) * 0.65))
-        left_span = max(line.left for line in ordered) - min(
-            line.left for line in ordered
-        )
-        right_span = max(line.right for line in ordered) - min(
-            line.right for line in ordered
-        )
+        left_span = max(line.left for line in ordered) - min(line.left for line in ordered)
+        right_span = max(line.right for line in ordered) - min(line.right for line in ordered)
         centers = [(line.left + line.right) / 2 for line in ordered]
         center_span = max(centers) - min(centers)
         if left_span <= tolerance:
@@ -81,7 +88,7 @@ class TextRegion:
             return "left"
         if right_span <= tolerance:
             return "right"
-        if center_span <= tolerance:
+        if center_span <= tolerance and left_span > tolerance*2 and right_span > tolerance*2:
             return "center"
         return "left"
 
@@ -306,6 +313,52 @@ def group_ocr_texts(items: list[OCRText]) -> list[TextRegion]:
                 lines=lines,
             )
         )
+    anchors = [region for region in regions if len(region.lines) >= 5
+               and region.looks_justified
+               and region.width >= median(l.bottom-l.top for l in region.lines)*12]
+    for i, region in enumerate(regions):
+        if region.alignment == 'justify' or not region.lines:
+            continue
+        height = median(l.bottom-l.top for l in region.lines)
+        for anchor in anchors:
+            anchor_height = median(l.bottom-l.top for l in anchor.lines)
+            gap = max(0, region.top-anchor.bottom, anchor.top-region.bottom)
+            if (max(height,anchor_height)/min(height,anchor_height) <= 1.6
+                    and gap <= height*3
+                    and abs(region.right-anchor.right) <= height
+                    and region.width >= anchor.width*.75
+                    and abs(region.left-anchor.left) <= anchor.width*.25):
+                regions[i] = replace(region, alignment_hint='justify')
+                break
+    # OCR can miss the first/last words of an interior line. Recover the
+    # repeated column boundary, while keeping paragraph tails and drop-cap
+    # indents intact. This also covers source words omitted by recognition.
+    for i, region in enumerate(regions):
+        if region.alignment != 'justify' or not region.lines:
+            continue
+        height = median(line.bottom-line.top for line in region.lines)
+        widths = sorted(line.right-line.left for line in region.lines)
+        width = median(widths[len(widths)//2:])
+        body = [line for line in region.lines if line.right-line.left >= width*.9]
+        left = round(median(line.left for line in body))
+        right = round(median(line.right for line in body))
+        corrected = []
+        for index, line in enumerate(region.lines):
+            x1, x2 = line.left, line.right
+            if (index == 0 and line.left-left > height
+                    and height < right-line.right <= width*.3):
+                # Missing words at both ends are not a paragraph indent.
+                x1, x2 = left, right
+            if (line.left-left > height*.6 and abs(line.right-right) <= height
+                    and (index >= 3 or (region.alignment_hint == 'justify'
+                         and line.left-left > height*2))):
+                x1 = left
+            if (index < len(region.lines)-1 and abs(line.left-left) <= height
+                    and height < right-line.right <= width*.3):
+                x2 = right
+            corrected.append(replace(line,left=x1,right=x2))
+        regions[i] = replace(region, lines=tuple(corrected),
+            left=min(line.left for line in corrected),right=max(line.right for line in corrected))
     return sorted(regions, key=lambda region: (region.top, region.left))
 
 

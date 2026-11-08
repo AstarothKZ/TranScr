@@ -9,6 +9,16 @@ from modules.text_processing.text_regions import TextRegion
 
 
 class PixelClippingTests(unittest.TestCase):
+    def test_clipped_or_invisible_translation_is_rejected(self):
+        from modules.ocr.types import OCRText
+        from modules.overlay.layout import RowPlan
+        source=OCRText('Original',0,0,100,20)
+        font=PixelFont(16)
+        for y in (-40,-10,40):
+            row=RowPlan(source,'Перевод',font,[(1,y,'Перевод')],0)
+            with self.subTest(y=y),self.assertRaises(ValueError):
+                render_row(row,'black')
+
     def test_actual_glyph_pixels_remain_inside_the_row(self):
         for text in ('защита', 'ЙЁ ÁÉ gjру', 'Недавно Royal заказали',
                      'А\u0301 е\u0308 g\u0323', 'ТРЕНАЖЁРЫ — обучение'):

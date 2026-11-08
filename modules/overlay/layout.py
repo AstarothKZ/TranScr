@@ -86,6 +86,7 @@ def fit_region(
     result = []
     alignment = region.alignment
     last_text_row = max(i for i, (_, value) in enumerate(partition) if value)
+    typical_width = median(sorted(line.right-line.left for line in slots)[len(slots)//2:])
     for index, (source, row_text) in enumerate(partition):
         width = source.right - source.left - 2
         height = source.bottom - source.top
@@ -116,7 +117,10 @@ def fit_region(
         natural_space = row_font.measure(" ")
         sizes = [row_font.measure(word) for word in words]
         gap = (width - sum(sizes)) / max(1, len(words) - 1)
-        if (alignment == "justify" and index < last_text_row and len(words) > 1
+        fill_last = (region.alignment_hint == 'justify' or
+                     (len(slots) >= 3 and source.right-source.left >= typical_width*.90
+                      and slots[-1].right-slots[-1].left >= typical_width*.90))
+        if (alignment == "justify" and (index < last_text_row or fill_last) and len(words) > 1
                 and natural_space <= gap):
             for word, size in zip(words, sizes):
                 runs.append((x, y, word))

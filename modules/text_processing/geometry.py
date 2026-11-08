@@ -95,7 +95,8 @@ def prepare_lines(image, lines):
             crop = image[line.top:line.bottom, line.left:line.right, :3].astype(float)
             limit = min(crop.shape[1], max(8, (line.bottom-line.top)*2))
             part = crop[:, :limit]
-            warm = (part[..., 0] > part[..., 1]*1.2) & (part[..., 0] > part[..., 2]*1.2)
+            warm = ((part[..., 0] > part[..., 1]*1.2) & (part[..., 0] > part[..., 2]*1.2)
+                    & (part[..., 0]-part[..., 1] > 40) & (part[..., 0]-part[..., 2] > 40))
             cols = np.flatnonzero(warm.sum(axis=0) >= 2)
             # Detect a detached warm marker even if OCR omitted its symbol.
             if (len(cols) and cols[-1] < limit-3
