@@ -19,6 +19,7 @@ class FakeFont:
         return 8
 
 
+@patch('modules.overlay.screen_overlay.ImageTk.PhotoImage', Mock())
 class OverlayTests(unittest.TestCase):
     @patch("modules.overlay.screen_overlay.tkfont.Font", FakeFont)
     def test_small_overlap_between_regions_does_not_drop_whole_block(self):

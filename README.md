@@ -37,4 +37,20 @@ PaddleOCR и офлайн-перевод Argos — дополнительные 
 
 Проверки: `.venv\Scripts\python.exe -m unittest discover -s tests -v`.
 
+Результаты ревизии, архитектура и оставшиеся пункты детализации:
+[docs/revision-2026-11-08.md](docs/revision-2026-11-08.md).
+
+Для автономной проверки наложения без запросов к переводчикам:
+
+```powershell
+.venv\Scripts\python.exe -m tests.render_capture_preview source.png ocr.json translations.json test/preview.png
+```
+
+`ocr.json` — список полей `OCRText` или Paddle-результат с `rec_texts` и
+`rec_boxes`; `translations.json` — объект «первая исходная строка блока →
+перевод всего блока». Координаты должны соответствовать изображению;
+`--width 780` позволяет воспроизвести масштаб захвата. Пропущенные в словаре
+блоки остаются без изменений. Для простой синтетической проверки:
+`.venv\Scripts\python.exe -m tests.render_layout_preview`.
+
 Зависимости: `requirements.txt` нужен для основного запуска; `requirements-optional.txt` — только для PaddleOCR и Argos. Tkinter входит в установку Python, отдельно через pip не устанавливается. Тесты используют стандартный `unittest` и зависимости приложения.

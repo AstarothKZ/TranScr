@@ -1,4 +1,4 @@
-"""A Windows click-through overlay with fixed OCR-aligned white rectangles."""
+"""Windows click-through overlay with source-aligned text and repaired backgrounds."""
 
 import ctypes
 import logging
@@ -7,7 +7,9 @@ import tkinter as tk
 import tkinter.font as tkfont
 from dataclasses import replace
 
-from PIL import ImageTk
+from PIL import ImageTk, Image, ImageDraw
+from modules.overlay.fonts import PixelFont
+from modules.overlay.styling import preserve_case, estimate_bold, strengthen_color
 from modules.overlay.background import prepare_background
 
 from modules.text_processing.text_regions import layout_slots, separate_row_overlaps
@@ -51,7 +53,7 @@ class ScreenOverlay:
         self._fonts.clear()
         self._images = []
 
-    def show(self, translated_regions, screen_bounds, source_image=None) -> None:
+    def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None) -> None:
         """Draw measured translations only inside their original OCR rows."""
         from modules.overlay.layout import fit_region
 
@@ -63,6 +65,13 @@ class ScreenOverlay:
         self.window.update_idletasks()
         occupied = []
         accepted = []
+        fonts = {}
+
+        def make_font(size):
+            key = (size, bold)
+            if key not in fonts:
+                fonts[key] = PixelFont(size, bold=bold)
+            return fonts[key]
         # Apply across region boundaries as well, including cached OCR output.
         sources = [
             line for region, _ in translated_regions for line in layout_slots(region)
@@ -90,15 +99,8 @@ class ScreenOverlay:
         for region, text in regions:
             if not text.strip():
                 continue
-            fonts = {}
-
-            def make_font(size):
-                if size not in fonts:
-                    fonts[size] = tkfont.Font(
-                        root=self.window, family="Segoe UI", size=-size
-                    )
-                return fonts[size]
-
+            text = preserve_case(region.text, text)
+            bold = estimate_bold(source_image, region)
             plan = fit_region(region, text, make_font)
             boxes = [
                 (row.source.left, row.source.top, row.source.right, row.source.bottom)
@@ -143,8 +145,10 @@ class ScreenOverlay:
         for row in accepted:
             line = row.source
             box = (line.left, line.top, line.right, line.bottom)
-            style = prepare_background(source_image, box) if source_image is not None else None
-            text_colors[id(row)] = style.text_color if style else self.TEXT_COLOR
+            style = backgrounds.get(box) if backgrounds is not None else None
+            if style is None and source_image is not None:
+                style = prepare_background(source_image, box)
+            text_colors[id(row)] = strengthen_color(style.text_color, style.color) if style else self.TEXT_COLOR
             if style is not None and style.patch is not None:
                 photo = ImageTk.PhotoImage(style.patch, master=self.window)
                 self._images.append(photo)
@@ -153,6 +157,17 @@ class ScreenOverlay:
                 color = style.color if style else self.BOX_COLOR
                 self.canvas.create_rectangle(*box, fill=color, outline=color, width=0)
         for row in accepted:
+            if isinstance(row.font, PixelFont):
+                line = row.source
+                layer = Image.new('RGBA', (line.right-line.left, line.bottom-line.top))
+                draw = ImageDraw.Draw(layer)
+                for x, y, value in row.runs:
+                    draw.text((x-line.left, y-line.top-row.ink_top), value,
+                              font=row.font.font, fill=text_colors[id(row)], anchor='la')
+                photo = ImageTk.PhotoImage(layer, master=self.window)
+                self._images.append(photo)
+                self.canvas.create_image(line.left, line.top, anchor='nw', image=photo)
+                continue
             for x, y, value in row.runs:
                 self.canvas.create_text(
                     x,

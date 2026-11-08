@@ -1,4 +1,5 @@
 import asyncio
+import math
 from typing import Any, cast
 
 import numpy as np
@@ -28,7 +29,7 @@ class WindowsOCRModule:
             )
         self.engine: OcrEngine = engine
 
-    def recognize(self, image: np.ndarray) -> list[OCRText]:
+    def recognize(self, image: np.ndarray, *, _split_labels=True) -> list[OCRText]:
         if max(image.shape[:2]) > OcrEngine.max_image_dimension:
             raise ValueError(
                 f"Область превышает предел Windows OCR ({OcrEngine.max_image_dimension} px). "
@@ -45,14 +46,16 @@ class WindowsOCRModule:
             words = [word for word in line.words if word.text.strip()]
             if not words:
                 continue
-            left = min(int(word.bounding_rect.x) for word in words)
-            top = min(int(word.bounding_rect.y) for word in words)
+            left = max(0, min(math.floor(word.bounding_rect.x) for word in words) - 1)
+            top = max(0, min(math.floor(word.bounding_rect.y) for word in words) - 1)
             right = max(
-                int(word.bounding_rect.x + word.bounding_rect.width) for word in words
+                math.ceil(word.bounding_rect.x + word.bounding_rect.width) for word in words
             )
             bottom = max(
-                int(word.bounding_rect.y + word.bounding_rect.height) for word in words
+                math.ceil(word.bounding_rect.y + word.bounding_rect.height) for word in words
             )
+            right = min(image.shape[1], right + 1)
+            bottom = min(image.shape[0], bottom + 1)
             text = line.text.strip()
             if not text:
                 continue
@@ -65,6 +68,9 @@ class WindowsOCRModule:
                     bottom=bottom,
                 )
             )
+        if _split_labels:
+            from modules.ocr.labels import recover_labels
+            return recover_labels(image, texts, lambda crop: self.recognize(crop, _split_labels=False))
         return texts
 
     async def _recognize_async(self, bitmap: SoftwareBitmap) -> Any:

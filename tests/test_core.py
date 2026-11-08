@@ -110,6 +110,64 @@ class CoreTests(unittest.TestCase):
         process_capture(capturer, (0, 0, 80, 20), False, runtime, cancel=cancel)
         runtime.translator.translate_many.assert_not_called()
 
+    def test_cancel_before_capture_does_no_work(self):
+        cancel = threading.Event()
+        cancel.set()
+        capturer = Mock()
+        runtime = self.runtime()
+        process_capture(capturer, (0, 0, 80, 20), False, runtime, cancel=cancel)
+        capturer.capture_region.assert_not_called()
+        runtime.ocr_worker.submit.assert_not_called()
+
+    def test_cancel_during_ocr_wait_returns_without_callback(self):
+        cancel = threading.Event()
+        capturer = Mock()
+        capturer.capture_region.return_value = (np.zeros((20, 80, 3), dtype=np.uint8), None)
+        runtime = self.runtime()
+        runtime.ocr_worker.submit.side_effect = lambda *_: (cancel.set() or True)
+        result = process_capture(capturer, (0, 0, 80, 20), False, runtime, cancel=cancel)
+        self.assertEqual(result.translated_regions, [])
+        runtime.translator.translate_many.assert_not_called()
+
+    def test_cancel_during_translation_does_not_cache_partial_frame(self):
+        cancel = threading.Event()
+        capturer = Mock()
+        capturer.capture_region.return_value = (np.indices((20, 80, 3))[1].astype(np.uint8), None)
+        runtime = self.runtime()
+        runtime.translator.translate_many.side_effect = lambda *_: (cancel.set() or {"Hello": "Привет"})
+        cache = FrameCache()
+        process_capture(capturer, (0, 0, 80, 20), False, runtime, cache, cancel)
+        cancel.clear()
+        runtime.translator.translate_many.side_effect = None
+        result = process_capture(capturer, (0, 0, 80, 20), False, runtime, cache, cancel)
+        self.assertFalse(result.cache_hit)
+        self.assertEqual(runtime.ocr_worker.submit.call_count, 2)
+
+    def test_partial_language_result_does_not_enter_frame_cache(self):
+        capturer = Mock()
+        capturer.capture_region.return_value = (np.indices((20, 80, 3))[1].astype(np.uint8), None)
+        runtime = self.runtime()
+        runtime.translator.translate_many.return_value = {"Hello": "Привет very limited"}
+        cache = FrameCache()
+        for _ in range(2):
+            result = process_capture(capturer, (0, 0, 80, 20), False, runtime, cache)
+            self.assertFalse(result.cache_hit)
+
+    def test_frame_fingerprint_accepts_noncontiguous_image(self):
+        frame = np.arange(180, dtype=np.uint8).reshape(6, 10, 3)[:, ::2]
+        self.assertEqual(FrameCache.fingerprint(frame), FrameCache.fingerprint(frame.copy()))
+
+    def test_background_prepared_and_reused_with_frame(self):
+        capturer = Mock()
+        capturer.capture_region.return_value = (np.indices((20, 80, 3))[1].astype(np.uint8), None)
+        runtime = self.runtime()
+        cache = FrameCache()
+        first = process_capture(capturer, (0, 0, 80, 20), False, runtime, cache)
+        second = process_capture(capturer, (0, 0, 80, 20), False, runtime, cache)
+        self.assertIn((0, 0, 80, 20), first.backgrounds)
+        self.assertIs(first.backgrounds, second.backgrounds)
+        self.assertEqual(second.background_ms, 0)
+
     def test_worker_rejects_overlapping_frames(self):
         started, release, finished = (
             threading.Event(),

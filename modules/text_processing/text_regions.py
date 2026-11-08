@@ -36,7 +36,7 @@ class TextRegion:
     @property
     def looks_justified(self) -> bool:
         """Return True only for a stable left edge and similarly long body lines."""
-        if len(self.lines) < 3:
+        if len(self.lines) < 2:
             return False
         ordered = sorted(self.lines, key=lambda line: (line.top, line.left))
         heights = [max(1, line.bottom - line.top) for line in ordered]
@@ -100,7 +100,7 @@ def _pair_geometry(first: OCRText, second: OCRText) -> tuple[float, set[str]] | 
     height_a = max(1, upper.bottom - upper.top)
     height_b = max(1, lower.bottom - lower.top)
     reference_height = float(median((height_a, height_b)))
-    if max(height_a, height_b) / min(height_a, height_b) > 1.45:
+    if max(height_a, height_b) / min(height_a, height_b) > 1.60:
         return None
 
     # Lines must be visually consecutive, not side-by-side items or paragraphs
@@ -239,10 +239,25 @@ def group_ocr_texts(items: list[OCRText]) -> list[TextRegion]:
             # A short sentence-ending row followed by a full row starts a new
             # paragraph. Never redistribute its translation into the next one.
             body_width = max(row.right - row.left for row in flow)
+            if (len(flow) >= 2
+                    and item.left - min(row.left for row in flow) > (item.bottom-item.top)*.5
+                    and previous.right-previous.left < body_width*.9):
+                continue
             if (
                 previous.text.rstrip().endswith((".", "!", "?", "。"))
-                and previous.right - previous.left < body_width * 0.9
+                and previous.right - previous.left < body_width * 0.96
                 and item.right - item.left > previous.right - previous.left + 4
+            ):
+                continue
+            # A short, taller standalone heading above a full-width body row
+            # is not the first line of that paragraph.
+            if (
+                len(flow) == 1
+                and len(previous.text.split()) <= 6
+                and not previous.text.rstrip().endswith((".", ",", ";", "-"))
+                and item.right - item.left > body_width * 1.5
+                and previous.bottom - previous.top > (item.bottom - item.top) * 1.15
+                and item.top - previous.bottom >= 0
             ):
                 continue
             if len(flow) >= 2:
@@ -327,13 +342,26 @@ def split_translation_to_source_lines(
         return [(lines[0], " ".join(words))]
     count, rows = len(words), len(lines)
     widths = [max(1, line.right - line.left - 2) for line in lines]
+    if strict:
+        # Greedy packing is sufficient for feasibility: consuming more words in
+        # an earlier slot cannot make the remaining suffix harder to fit.
+        # Measure full runs (kerning included), without an O(rows * words²)
+        # dynamic-programming search on every font-size probe.
+        result = []
+        start = 0
+        for line, width in zip(lines, widths):
+            end = start
+            while end < count and measure(" ".join(words[start:end + 1])) <= width:
+                end += 1
+            result.append((line, " ".join(words[start:end])))
+            start = end
+        return result if start == count else []
     word_widths = [measure(word) for word in words]
     prefix = [0]
     for width in word_widths:
         prefix.append(prefix[-1] + width)
     space = measure(" ")
     dp = [{0: (0.0, -1)}]
-    measured = {}
     # Bounded search for large OCR paragraphs; each word remains in order.
     window = max(32, (count // rows + 1) * 4)
     for row, target in enumerate(widths):
@@ -341,18 +369,11 @@ def split_translation_to_source_lines(
         for start, (cost, _) in dp[-1].items():
             for end in range(start, min(count, start + window) + 1):
                 n = end - start
-                if n == 0 and not strict and count >= rows:
+                if n == 0 and count >= rows:
                     continue
-                if not strict and count - end < rows - row - 1 and count >= rows:
+                if count - end < rows - row - 1 and count >= rows:
                     continue
                 actual = prefix[end] - prefix[start] + space * max(0, n - 1)
-                if strict:
-                    key = (start, end)
-                    if key not in measured:
-                        measured[key] = measure(" ".join(words[start:end]))
-                    actual = measured[key]
-                    if actual > target:
-                        continue
                 ratio = actual / target
                 penalty = (1 - ratio) ** 2 if ratio <= 1 else 8 * (ratio - 1) ** 2
                 if n == 0:

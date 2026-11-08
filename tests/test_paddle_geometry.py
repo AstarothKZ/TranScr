@@ -32,4 +32,12 @@ class PaddleGeometryTests(unittest.TestCase):
         heading = next(line for line in lines if line.text.startswith("is very"))
         subtitle = next(line for line in lines if line.text.startswith("That's why"))
         self.assertLess(heading.bottom, subtitle.top)
-        self.assertEqual(heading.bottom, 576)
+        self.assertEqual(heading.bottom, 577)
+        from modules.text_processing.text_regions import group_ocr_texts
+        regions = group_ocr_texts(lines)
+        left_body = [r for r in regions if r.left < 100 and 600 < r.top < 800]
+        self.assertEqual([len(r.lines) for r in left_body], [4, 6])
+        right_body = next(r for r in regions if r.text.startswith("The RGS 2 may"))
+        self.assertEqual(len(right_body.lines), 4)
+        dimensions = next(r for r in regions if r.text.startswith("Sight Head"))
+        self.assertEqual(len(dimensions.lines), 1)

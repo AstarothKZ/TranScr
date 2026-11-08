@@ -17,6 +17,14 @@ class Font:
 
 
 class LineLayoutTests(unittest.TestCase):
+    def test_shorter_paragraph_uses_all_source_rows(self):
+        region = self.region([240, 240, 240, 240])
+        text = 'Один два три четыре пять шесть семь восемь'
+        plan = fit_region(region, text, Font)
+        self.assertTrue(all(row.text for row in plan))
+        self.assertEqual(' '.join(row.text for row in plan), text)
+        self.assert_inside(plan)
+
     def region(self, widths):
         lines = tuple(
             OCRText("source row", 0, i * 24, width, i * 24 + 20)
@@ -96,3 +104,24 @@ class LineLayoutTests(unittest.TestCase):
             [OCRText("left", 0, 0, 100, 20), OCRText("right", 110, 24, 210, 44)]
         )
         self.assertEqual(len(regions), 2)
+
+    def test_ragged_rows_and_last_line_use_natural_spacing(self):
+        for widths in ([240, 180, 120], [240, 240, 120]):
+            plan = fit_region(self.region(widths), "Один два три четыре пять шесть семь восемь", Font)
+            self.assertTrue(plan)
+            final = [row for row in plan if row.text][-1]
+            self.assertEqual(len(final.runs), 1)
+            if widths[1] == 180:
+                self.assertTrue(all(len(row.runs) <= 1 for row in plan))
+            self.assert_inside(plan)
+
+    def test_strict_fit_measurements_scale_with_words_and_rows(self):
+        from modules.text_processing.text_regions import split_translation_to_source_lines
+        calls = []
+        def measure(text):
+            calls.append(text)
+            return len(text) * 5
+        text = " ".join(["слово"] * 100)
+        result = split_translation_to_source_lines(self.region([300] * 12), text, measure, strict=True)
+        self.assertEqual(" ".join(value for _, value in result).strip(), text)
+        self.assertLessEqual(len(calls), 112)

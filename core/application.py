@@ -914,7 +914,10 @@ class Application:
         if result.translated_regions:
             overlay_started = perf_counter()
             try:
-                self.overlay.show(result.translated_regions, result.area, result.source_image)
+                self.overlay.show(
+                    result.translated_regions, result.area, result.source_image,
+                    backgrounds=result.backgrounds,
+                )
             except Exception as error:
                 self.status_var.set(f"Перевод получен, но оверлей не показан: {error}")
                 self._append_log(f"Ошибка оверлея: {error}")

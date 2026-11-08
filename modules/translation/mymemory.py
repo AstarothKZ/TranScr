@@ -61,6 +61,8 @@ class MyMemoryTranslateProvider:
                 f"MyMemory не сработал: {type(error).__name__}: {error}"
             ) from error
 
+        if not isinstance(payload, dict):
+            raise RuntimeError("MyMemory вернул некорректный ответ.")
         status = payload.get("responseStatus", 200)
         details = payload.get("responseDetails", "")
         if str(status) != "200":
@@ -69,7 +71,10 @@ class MyMemoryTranslateProvider:
             )
 
         data = payload.get("responseData") or {}
-        translated = unescape(str(data.get("translatedText", ""))).strip()
+        raw_text = data.get("translatedText") if isinstance(data, dict) else None
+        if not isinstance(raw_text, str):
+            raise RuntimeError("MyMemory вернул некорректный текст перевода.")
+        translated = unescape(raw_text).strip()
         if not translated:
             raise RuntimeError(f"MyMemory вернул пустой результат. {details}".strip())
         if translated.upper().startswith("MYMEMORY WARNING"):

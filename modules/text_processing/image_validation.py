@@ -12,4 +12,4 @@ def has_source_ink(image, line) -> bool:
     pixels = image[line.top : line.bottom, line.left : line.right, :3].reshape(-1, 3)
     # A flat background cannot contain text. Keep even low-contrast real text;
     # this check does not attempt to score recognition quality.
-    return bool(np.max(np.ptp(pixels.astype(np.int16), axis=0)) >= 2)
+    return bool(np.max(np.ptp(pixels, axis=0)) >= 2)

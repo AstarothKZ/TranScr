@@ -66,7 +66,8 @@ class ScreenCapturer:
         self.last_bounds = actual_bounds
         # The NumPy view keeps the screenshot's byte buffer alive and avoids a
         # second full-frame copy. OCR engines in this project only read pixels.
-        image = np.frombuffer(screenshot.rgb, dtype=np.uint8).reshape(
+        rgb = screenshot.rgb
+        image = np.frombuffer(rgb, dtype=np.uint8).reshape(
             screenshot.height, screenshot.width, 3
         )
 
@@ -75,7 +76,7 @@ class ScreenCapturer:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
             output_path = self.output_dir / f"screenshot_{timestamp}.png"
-            mss.tools.to_png(screenshot.rgb, screenshot.size, output=str(output_path))
+            mss.tools.to_png(rgb, screenshot.size, output=str(output_path))
 
         return image, output_path
 

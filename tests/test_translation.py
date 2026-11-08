@@ -164,6 +164,21 @@ class TranslationTests(unittest.TestCase):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_mymemory_rejects_null_text_and_invalid_payload(self):
+        provider = MyMemoryTranslateProvider()
+        provider._client.close()
+        self.addCleanup(provider.close)
+        for payload in ([], {"responseData": {"translatedText": None}}, {"responseData": ["bad"]}):
+            with self.subTest(payload=payload):
+                provider._client = httpx.Client(transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=payload)
+                ))
+                try:
+                    with self.assertRaises(RuntimeError):
+                        provider.translate("Hello")
+                finally:
+                    provider._client.close()
+
     def test_argos_resolves_model_only_once(self):
         provider = ArgosTranslateProvider()
         model = Mock()

@@ -6,7 +6,7 @@ import hashlib
 import logging
 import numpy as np
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from queue import Empty, Queue
 from time import perf_counter
@@ -15,9 +15,15 @@ from typing import TYPE_CHECKING
 from modules.capture.types import ScreenBounds
 from modules.ocr.ocr_worker import OCRWorker
 from modules.ocr.types import OCRText
-from modules.text_processing.filters import should_translate, translation_changed
+from modules.text_processing.geometry import prepare_lines
+from modules.overlay.background import BackgroundStyle, prepare_background
+from modules.text_processing.filters import (
+    should_translate, translation_changed, untranslated_fragments,
+)
 from modules.text_processing.image_validation import has_source_ink
-from modules.text_processing.text_regions import TextRegion, group_ocr_texts
+from modules.text_processing.text_regions import (
+    TextRegion, group_ocr_texts, layout_slots, separate_row_overlaps,
+)
 from modules.translation.translator import Translator
 
 LOGGER = logging.getLogger("transcr.pipeline")
@@ -48,6 +54,8 @@ class CaptureResult:
     screenshot_path: Path | None = None
     cache_hit: bool = False
     source_image: np.ndarray | None = None
+    backgrounds: dict[tuple[int, int, int, int], BackgroundStyle] = field(default_factory=dict)
+    background_ms: float = 0.0
 
 
 class FrameCache:
@@ -60,7 +68,7 @@ class FrameCache:
 
     @staticmethod
     def fingerprint(image) -> bytes:
-        return hashlib.blake2s(memoryview(image), digest_size=16).digest()
+        return hashlib.blake2s(memoryview(np.ascontiguousarray(image)), digest_size=16).digest()
 
     def get(
         self,
@@ -77,6 +85,7 @@ class FrameCache:
                 capture_ms=capture_ms,
                 ocr_ms=0.0,
                 translate_ms=0.0,
+                background_ms=0.0,
                 screenshot_path=screenshot_path,
                 cache_hit=True,
             )
@@ -104,6 +113,12 @@ def process_capture(
 ) -> CaptureResult:
     """Process one captured region, without making any Tkinter/UI calls."""
     capture_started = perf_counter()
+
+    def cancelled_result() -> CaptureResult:
+        return CaptureResult(area, [], 0, 0, 0.0, 0.0, 0.0, [])
+
+    if cancel is not None and cancel.is_set():
+        return cancelled_result()
     LOGGER.info("Захватываю экран: x=%s y=%s w=%s h=%s", *area)
     image, screenshot_path = screen_capturer.capture_region(area, save_debug=save_debug)
     capture_ms = (perf_counter() - capture_started) * 1000
@@ -124,19 +139,21 @@ def process_capture(
     ocr_started = perf_counter()
     if not runtime.ocr_worker.submit(image, ocr_started):
         raise RuntimeError("OCR занят предыдущей задачей. Попробуйте ещё раз.")
-    try:
-        deadline = perf_counter() + 60
-        while True:
+    deadline = perf_counter() + 60
+    while True:
+        if cancel is not None and cancel.is_set():
+            return cancelled_result()
+        try:
             remaining = deadline - perf_counter()
             if remaining <= 0:
-                raise Empty
+                raise TimeoutError("OCR не ответил за 60 секунд.")
             kind, payload, elapsed_ms, token = runtime.ocr_results.get(
-                timeout=remaining
+                timeout=min(remaining, 0.1)
             )
             if token == ocr_started:
                 break
-    except Empty as error:
-        raise TimeoutError("OCR не ответил за 60 секунд.") from error
+        except Empty:
+            continue
     if kind == "error":
         raise RuntimeError(f"Ошибка OCR: {payload}")
     recognized: list[OCRText] = payload
@@ -164,6 +181,7 @@ def process_capture(
             "OCR: исключено рамок без исходного рисунка или за пределами кадра: %d",
             len(recognized) - len(valid_lines),
         )
+    valid_lines = prepare_lines(image, valid_lines)
     meaningful_lines = [item for item in valid_lines if should_translate(item.text)]
     filtered_count = len(recognized) - len(meaningful_lines)
     regions = group_ocr_texts(meaningful_lines)
@@ -220,6 +238,21 @@ def process_capture(
         for region in eligible
         if region.text.strip() in translated_by_text
     ]
+    if cancel is not None and cancel.is_set():
+        return cancelled_result()
+    background_started = perf_counter()
+    backgrounds = {}
+    lines = separate_row_overlaps([
+        line for region, _ in translated_regions for line in layout_slots(region)
+    ])
+    for line in lines:
+        if cancel is not None and cancel.is_set():
+            return cancelled_result()
+        box = (line.left, line.top, line.right, line.bottom)
+        if box not in backgrounds:
+            backgrounds[box] = prepare_background(image, box)
+    background_ms = (perf_counter() - background_started) * 1000
+    LOGGER.info("Восстановление фона: %.0f мс", background_ms)
     result = CaptureResult(
         area=area,
         translated_regions=translated_regions,
@@ -231,6 +264,8 @@ def process_capture(
         errors=errors,
         source_image=image,
         screenshot_path=screenshot_path,
+        backgrounds=backgrounds,
+        background_ms=background_ms,
     )
     if (
         frame_cache is not None
@@ -239,6 +274,8 @@ def process_capture(
             or result.filtered_count == result.recognized_count
         )
         and not result.errors
+        and not (cancel is not None and cancel.is_set())
+        and not any(untranslated_fragments(text) for _, text in translated_regions)
     ):
         frame_cache.put(area, fingerprint, result)
     return result

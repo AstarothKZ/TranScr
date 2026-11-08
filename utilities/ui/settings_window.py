@@ -78,6 +78,15 @@ class SettingsWindow:
         container = ttk.Frame(self.root, padding=10)
         container.pack(fill="both", expand=True)
 
+        # Reserve status space before the expandable notebook can consume it.
+        self.status_label = ttk.Label(
+            container, textvariable=self.status_var, wraplength=590,
+            justify="left", foreground="#245c35", padding=(4, 8),
+        )
+        self.status_label.pack(side="bottom", fill="x")
+        container.bind('<Configure>', lambda event: self.status_label.configure(
+            wraplength=max(200, event.width-28)))
+
         self.notebook = ttk.Notebook(container)
         self.notebook.pack(fill="both", expand=True)
         self.settings_tab = ttk.Frame(self.notebook)
@@ -223,8 +232,9 @@ class SettingsWindow:
         )
         self.save_debug_checkbutton.pack(anchor="w", pady=(7, 0))
 
-        buttons = ttk.Frame(outer)
-        buttons.pack(fill="x", pady=(11, 0))
+        buttons = ttk.Frame(container)
+        # Allocate actions before the expanding notebook, just like status.
+        buttons.pack(side="bottom", fill="x", pady=(8, 4), before=self.notebook)
         for column in range(3):
             buttons.columnconfigure(column, weight=1, uniform="action_buttons")
         # Classic Tk buttons are used for the three main actions. On some Windows
@@ -290,14 +300,6 @@ class SettingsWindow:
             takefocus=True,
         )
         self.stop_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
-
-        ttk.Label(
-            outer,
-            textvariable=self.status_var,
-            wraplength=590,
-            justify="left",
-            foreground="#245c35",
-        ).pack(fill="x", anchor="w", pady=(9, 0))
 
         self.start_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
         self.dismiss_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())

@@ -16,6 +16,8 @@ _MONTH_DATE = re.compile(
     re.IGNORECASE,
 )
 _COMPACT_CODE = re.compile(r"^[A-Za-z0-9]+(?:[-_/][A-Za-z0-9]+)*$")
+_CONTACT = re.compile(r"^(?:https?://|www\.)?[^\s/@]+(?:@[^\s/]+)?\.[A-Za-z]{2,}(?:/\S*)?$", re.IGNORECASE)
+_DIMENSIONS = re.compile(r"^\d+\s*[xх×✕*]\s*\d+(?:\s*[xх×✕*]\s*\d+)?(?:\s*(?:px|пкс|пикс))?$", re.IGNORECASE)
 _LETTERS_ONLY = re.compile(r"^[A-Za-z]{5,}$")
 _VOWELS = re.compile(r"[aeiou]", re.IGNORECASE)
 _LETTERS_OR_DIGITS = re.compile(r"[A-Za-zА-Яа-яЁё0-9]")
@@ -35,6 +37,7 @@ _UI_LABELS = {
     "TIFF",
     "SVG",
     "PDF",
+    "PC",
     "РУС",
     "RUS",
     "PYC",
@@ -71,12 +74,22 @@ def should_translate(text: str) -> bool:
     code embedded inside a meaningful sentence, such as ``The A-4SU entered``.
     """
     value = " ".join((text or "").split()).strip()
+    if _CONTACT.fullmatch(value):
+        return False
+    # Filename/status labels are often returned as one OCR line by Paddle.
+    label = unicodedata.normalize('NFKC', value).strip(' [](){}|·•:;')
+    if re.fullmatch(r'(?:[^\s]+\.)?(?:png|jpe?g|gif|webp|bmp|tiff|pdf)(?:\s*[|·•]\s*[\d.,]+\s*(?:kb|mb|gb))?', label, re.IGNORECASE):
+        return False
     if not value or not _LETTERS_OR_DIGITS.search(value):
+        return False
+    if len(''.join(c for c in value if c.isalnum())) <= 3:
         return False
 
     if value.strip(" .;:").upper() in _UI_LABELS:
         return False
     if _NUMBERS_AND_SEPARATORS.fullmatch(value):
+        return False
+    if _DIMENSIONS.fullmatch(value):
         return False
     if _SIZE_LABEL.fullmatch(value.rstrip(" .;:")):
         return False

@@ -1,5 +1,16 @@
 import unittest
 
+from modules.text_processing.filters import should_translate
+
+
+class ResolutionFilterTests(unittest.TestCase):
+    def test_resolution_and_pc_logo_are_not_translated(self):
+        for value in ('1080 x 1523', '1080×1523', '1080 х 1523', '1920 X 1080 px', 'PC'):
+            with self.subTest(value=value):
+                self.assertFalse(should_translate(value))
+        self.assertTrue(should_translate('Connect your PC'))
+        self.assertTrue(should_translate('Image size is 1080 x 1523'))
+
 from modules.text_processing.filters import should_translate, untranslated_fragments
 
 

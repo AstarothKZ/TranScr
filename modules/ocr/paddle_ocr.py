@@ -26,7 +26,7 @@ class PaddleOCRModule:
             use_textline_orientation=False,
         )
 
-    def recognize(self, image: np.ndarray) -> list[OCRText]:
+    def recognize(self, image: np.ndarray, *, _split_labels=True) -> list[OCRText]:
         results = self.ocr.predict(image)
         texts: list[OCRText] = []
 
@@ -59,7 +59,7 @@ class PaddleOCRModule:
                 # display safety margin for antialiased glyph edges.
                 left, top = max(0, left-2), max(0, top-2)
                 right = min(image.shape[1], right+2)
-                bottom = min(image.shape[0], bottom+2)
+                bottom = min(image.shape[0], bottom+3)
                 confidence = (
                     float(rec_scores[index]) if index < len(rec_scores) else None
                 )
@@ -74,4 +74,7 @@ class PaddleOCRModule:
                         polygon=polygon,
                     )
                 )
+        if _split_labels:
+            from modules.ocr.labels import recover_labels
+            return recover_labels(image, texts, lambda crop: self.recognize(crop, _split_labels=False))
         return texts

@@ -12,3 +12,5 @@ class OCRText:
     bottom: int
     confidence: float | None = None
     polygon: tuple[tuple[int, int], ...] | None = None
+    bold: bool | None = None
+    label_size: int | None = None
