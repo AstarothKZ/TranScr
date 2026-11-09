@@ -13,4 +13,4 @@ class OCRText:
     confidence: float | None = None
     polygon: tuple[tuple[int, int], ...] | None = None
     bold: bool | None = None
-    label_size: int | None = None
+    label_size: int | None = None  # Legacy diagnostic JSON; no longer expands layout.

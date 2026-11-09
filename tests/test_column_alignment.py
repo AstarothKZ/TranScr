@@ -38,7 +38,7 @@ class ColumnAlignmentTests(unittest.TestCase):
             x,_,word=row.runs[-1]
             self.assertAlmostEqual(x+row.font.measure(word),row.source.right-1)
 
-    def test_fragment_inherits_column_without_merging_other_column(self):
+    def test_fragment_keeps_own_alignment_and_geometry(self):
         lines=[OCRText('full row',10,i*20,310,i*20+16) for i in range(6)]
         lines += [OCRText('fragment',60,150,310,166),
                   OCRText('next fragment',10,170,310,186),
@@ -46,5 +46,6 @@ class ColumnAlignmentTests(unittest.TestCase):
                   OCRText('other column',350,150,640,166)]
         regions=group_ocr_texts(lines)
         fragment=next(r for r in regions if r.text.startswith('fragment'))
-        self.assertEqual(fragment.alignment,'justify')
+        self.assertEqual(fragment.alignment,'right')
+        self.assertEqual(fragment.lines[0].left, 60)
         self.assertTrue(all(l.right<=310 for l in fragment.lines))

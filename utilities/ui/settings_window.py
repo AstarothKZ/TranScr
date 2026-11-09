@@ -345,7 +345,7 @@ class SettingsWindow:
             side="left"
         )
         self.log_file_label = ttk.Label(
-            controls, text="Файл: test/transcr.log", foreground="#666666"
+            controls, text="Файл журнала недоступен", foreground="#666666", wraplength=400
         )
         self.log_file_label.pack(side="right")
 

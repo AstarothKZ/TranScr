@@ -5,6 +5,18 @@ from modules.overlay.background import prepare_background
 
 
 class BackgroundTests(unittest.TestCase):
+    def test_tight_white_label_keeps_uniform_dark_exterior(self):
+        from modules.overlay.fonts import PixelFont
+        font = PixelFont(18, bold=True)
+        image = Image.new('RGB', (100, 40), '#161616')
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 8), 'Store', font=font.font, fill='white', anchor='lt')
+        box = draw.textbbox((10, 8), 'Store', font=font.font, anchor='lt')
+        box = (box[0]-1, box[1]-1, box[2]+1, box[3]+1)
+        style = prepare_background(np.array(image), box)
+        self.assertEqual(style.color, '#161616')
+        self.assertGreater(int(style.text_color[1:3], 16), 200)
+
     def test_dense_white_letters_are_not_mistaken_for_paper(self):
         frame = np.full((40, 180, 3), 15, dtype=np.uint8)
         for x in range(10, 160, 20):

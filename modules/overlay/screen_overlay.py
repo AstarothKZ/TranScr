@@ -51,8 +51,8 @@ class ScreenOverlay:
         self.canvas.delete("all")
         self._images = []
 
-    def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None) -> None:
-        """Draw measured translations only inside their original OCR rows."""
+    def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None) -> int:
+        """Draw source-bound translations and return the number of shown regions."""
         from modules.overlay.layout import fit_region
 
         self.clear()
@@ -63,6 +63,7 @@ class ScreenOverlay:
         self.window.update_idletasks()
         occupied = []
         accepted = []
+        accepted_regions = 0
         prepared_layers = {}
         prepared_styles = {}
         fonts = {}
@@ -156,6 +157,7 @@ class ScreenOverlay:
             prepared_layers.update(region_layers)
             prepared_styles.update(region_styles)
             accepted.extend(plan)
+            accepted_regions += 1
             occupied.extend(boxes)
         for row in accepted:
             line = row.source
@@ -173,7 +175,7 @@ class ScreenOverlay:
             self._images.append(photo)
             self.canvas.create_image(row.source.left, row.source.top, anchor='nw', image=photo)
         if not accepted:
-            return
+            return 0
         if not self._enable_click_through() or not self._set_native_window_bounds(
             left, top, width, height
         ):
@@ -182,6 +184,7 @@ class ScreenOverlay:
         self.window.attributes("-topmost", True)
         self.window.update_idletasks()
         LOGGER.info("Оверлей показал %d строк в исходных рамках", len(accepted))
+        return accepted_regions
 
     @staticmethod
     def _overlap_ratio(

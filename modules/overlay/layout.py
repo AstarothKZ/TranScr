@@ -1,7 +1,7 @@
 """Measured line-bound layout, independent of Tk windows and native handles."""
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
@@ -21,6 +21,7 @@ class RowPlan:
     # Text is always drawn using an explicit top-left anchor.
     runs: list[tuple[float, float, str]]
     ink_top: float = 0
+    compressed: bool = False
 
 
 def fit_region(
@@ -28,30 +29,6 @@ def fit_region(
 ) -> list[RowPlan]:
     """Return a complete plan or nothing; never truncate translated content."""
     slots = layout_slots(region)
-    if len(slots) == 1 and slots[0].label_size is not None:
-        source = slots[0]
-        # Preserve a readable common size; wrap navigation labels into their
-        # verified empty area instead of shrinking long captions to 4 px.
-        size = source.label_size
-        while size >= 7:
-            font = make_font(size)
-            step = font.metrics('linespace')+2
-            rows = max(1, (source.bottom-source.top)//step)
-            virtual = tuple(replace(source, top=source.top+i*step,
-                            bottom=source.top+(i+1)*step, label_size=None) for i in range(rows))
-            wrapped = replace(region, lines=virtual)
-            partition = split_translation_to_source_lines(wrapped,text,font.measure,strict=True)
-            if partition:
-                runs=[]
-                for slot,value in partition:
-                    if not value:
-                        continue
-                    box=font.bounds(value)
-                    runs.append((source.left+1, slot.top+1-box[1], value))
-                # Runs already refer to the font's actual draw origin.
-                return [RowPlan(source,text,font,runs,0)]
-            size -= 1
-        return []
     if not slots or any(
         line.right <= line.left + 2 or line.bottom <= line.top for line in slots
     ):
@@ -77,6 +54,11 @@ def fit_region(
         else:
             high = size - 1
     if font is None:
+        if len(slots) == 1 and slots[0].right-slots[0].left >= 24:
+            source = slots[0]
+            # A long single-line caption must not silently disappear. Render
+            # its complete glyph run, then fit the raster inside its own box.
+            return [RowPlan(source, text, make_font(max(5, min_height)), [], 0, True)]
         return []
     # Balance once at the selected size, preserving the fast greedy probes.
     # This also keeps shorter translations spread over the source paragraph.
