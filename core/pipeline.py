@@ -184,7 +184,7 @@ def process_capture(
     valid_lines = prepare_lines(image, valid_lines)
     meaningful_lines = [item for item in valid_lines if should_translate(item.text)]
     filtered_count = len(recognized) - len(meaningful_lines)
-    regions = group_ocr_texts(meaningful_lines)
+    regions = group_ocr_texts(meaningful_lines, context=valid_lines)
     eligible = [region for region in regions if should_translate(region.text)]
     LOGGER.info(
         "Фильтрация: исключено строк %d; сформировано текстовых областей %d",

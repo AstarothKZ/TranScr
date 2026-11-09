@@ -46,7 +46,8 @@ def main():
     output = source.copy()
     plans = []
     started = perf_counter()
-    for region in group_ocr_texts([line for line in prepare_lines(frame, lines) if should_translate(line.text)]):
+    prepared = prepare_lines(frame, lines)
+    for region in group_ocr_texts([line for line in prepared if should_translate(line.text)], context=prepared):
         text = translations.get(region.text.splitlines()[0])
         if not text:
             continue

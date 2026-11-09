@@ -97,6 +97,12 @@ def should_translate(text: str) -> bool:
         return False
     if _NUMBERS_AND_SEPARATORS.fullmatch(value):
         return False
+    # OCR may return several adjacent serial/model cells as one line. A row
+    # made entirely of numeric identifiers remains data regardless of spacing.
+    tokens = value.split()
+    if all(_COMPACT_CODE.fullmatch(token) and any(c.isdigit() for c in token)
+           for token in tokens):
+        return False
     if _DIMENSIONS.fullmatch(value):
         return False
     if _SIZE_LABEL.fullmatch(value.rstrip(" .;:")):

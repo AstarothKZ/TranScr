@@ -6,6 +6,52 @@ from modules.text_processing.filters import should_translate
 
 
 class GeometryTests(unittest.TestCase):
+    def test_red_photo_detail_is_not_a_list_marker(self):
+        image = np.full((40, 200, 3), 35, dtype=np.uint8)
+        image[10:20, 5:12] = [210, 60, 20]
+        image[10:25, 18:150] = 220
+        line = prepare_lines(image, [OCRText('Vancouver', 2, 5, 180, 30)])[0]
+        self.assertEqual(line.left, 2)
+
+    def test_large_ocr_extent_is_never_shrunk(self):
+        image = np.full((100, 300, 3), 190, dtype=np.uint8)
+        image[20:65, 50:65] = 15
+        image[20:65, 90:105] = 15
+        original = OCRText('Large title', 20, 10, 250, 80)
+        line = prepare_lines(image, [original])[0]
+        self.assertLessEqual(line.left, original.left)
+        self.assertGreaterEqual(line.right, original.right)
+        self.assertLessEqual(line.top, original.top)
+        self.assertGreaterEqual(line.bottom, original.bottom)
+
+    def test_search_heading_keeps_its_description_separate(self):
+        from modules.text_processing.text_regions import group_ocr_texts
+        regions = group_ocr_texts([OCRText('About us', 22, 472, 125, 493),
+                                  OCRText('Be ambitious and persevere', 23, 504, 481, 523)])
+        self.assertEqual(len(regions), 2)
+
+    def test_adjacent_serial_cells_are_not_prose(self):
+        self.assertFalse(should_translate('145108 12354 A-4C'))
+        self.assertTrue(should_translate('In service 2001'))
+        self.assertTrue(should_translate('The A-4C entered service'))
+
+    def test_article_with_lower_top_joins_preceding_ocr_fragment(self):
+        image = np.full((40, 250, 3), 255, dtype=np.uint8)
+        lines = prepare_lines(image, [OCRText('The', 5, 7, 30, 25),
+                                     OCRText('first aircraft', 36, 5, 200, 25)])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].text, 'The first aircraft')
+
+    def test_table_status_rows_are_not_reflowed_as_a_paragraph(self):
+        from modules.text_processing.text_regions import group_ocr_texts
+        rows = [OCRText('In service 2001', 100, y, 220, y+13) for y in (5, 20, 35)]
+        cells = [OCRText(value, x, y, x+20, y+13)
+                 for y in (5, 20, 35) for x, value in ((5, '12345'), (40, '901'))]
+        regions = group_ocr_texts(rows, context=rows+cells)
+        self.assertEqual(len(regions), 3)
+        self.assertTrue(all(len(r.lines) == 1 for r in regions))
+        self.assertEqual(len(group_ocr_texts(rows)), 1)
+
     def test_tinted_black_letter_is_not_removed_as_orange_marker(self):
         image=np.full((50,140,3), [190,175,145], dtype=np.uint8)
         image[8:35,8:25]=[55,43,29]

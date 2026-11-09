@@ -220,7 +220,7 @@ def separate_row_overlaps(items: list[OCRText]) -> list[OCRText]:
     return result
 
 
-def group_ocr_texts(items: list[OCRText]) -> list[TextRegion]:
+def group_ocr_texts(items: list[OCRText], *, context: list[OCRText] = ()) -> list[TextRegion]:
     """Group consecutive, similar-height rows into unambiguous vertical text flows.
 
     Unlike connected-components grouping, a row can join only the immediately
@@ -239,10 +239,28 @@ def group_ocr_texts(items: list[OCRText]) -> list[TextRegion]:
         return []
 
     flows: list[list[OCRText]] = []
+    # Numeric cells are filtered from translation but still describe the grid.
+    # Keep neighbouring prose cells independent instead of reflowing a column
+    # of statuses as a paragraph and moving translations between table rows.
+    numeric_cells = [line for line in context
+                     if line.text.strip() and all(c.isdigit() or c in ' .,/-' for c in line.text)]
+    def table_cell(item):
+        height = item.bottom-item.top
+        return sum(min(item.bottom, cell.bottom)-max(item.top, cell.top)
+                   >= .65*min(height, cell.bottom-cell.top)
+                   and (cell.right <= item.left or cell.left >= item.right)
+                   for cell in numeric_cells) >= 2
+
+    table_cells = {id(item) for item in ordered if table_cell(item)}
     for item in ordered:
+        if id(item) in table_cells:
+            flows.append([item])
+            continue
         candidates: list[tuple[float, int]] = []
         for flow_index, flow in enumerate(flows):
             previous = flow[-1]
+            if id(previous) in table_cells:
+                continue
             # A short sentence-ending row followed by a full row starts a new
             # paragraph. Never redistribute its translation into the next one.
             body_width = max(row.right - row.left for row in flow)
@@ -263,8 +281,9 @@ def group_ocr_texts(items: list[OCRText]) -> list[TextRegion]:
                 and len(previous.text.split()) <= 6
                 and not previous.text.rstrip().endswith((".", ",", ";", "-"))
                 and item.right - item.left > body_width * 1.5
-                and previous.bottom - previous.top > (item.bottom - item.top) * 1.15
-                and item.top - previous.bottom >= 0
+                and (previous.bottom-previous.top > (item.bottom-item.top)*1.15
+                     or item.top-previous.bottom > min(previous.bottom-previous.top,
+                                                       item.bottom-item.top)*.25)
             ):
                 continue
             if len(flow) >= 2:

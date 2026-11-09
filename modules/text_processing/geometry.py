@@ -57,7 +57,10 @@ def refine_box(image, line, neighbors=()):
         return line
     gray = crop.mean(axis=2)
     # Refine only light/medium paper. Dark UI text needs a separate polarity.
-    bg = float(np.percentile(gray, 75))
+    # Estimate the paper from the border, not from bright glyphs filling a
+    # tight OCR box. White text on a photograph must not reverse polarity.
+    border = np.concatenate((gray[0], gray[-1], gray[:, 0], gray[:, -1]))
+    bg = float(np.median(border))
     if bg < 90 or np.percentile(gray, 1) > bg-15:
         return line
     mask = gray < bg-max(15, (bg-float(np.percentile(gray, 10)))*.35)
@@ -75,11 +78,10 @@ def refine_box(image, line, neighbors=()):
     bottom = min(y2, y1+max(b[3] for b in parts)+1)
     if right-left < (line.right-line.left)*.5:
         return line
-    if line.bottom-line.top < 40:
-        # Small glyphs have variable cap/x-heights; shrinking their rectangles
-        # independently destroys the line-height agreement used for grouping.
-        left, right = min(left, line.left), max(right, line.right)
-        top, bottom = min(top, line.top), max(bottom, line.bottom)
+    # OCR owns the source extent. Pixel refinement may recover clipped edges,
+    # but must never discard the beginning or end of a recognized word.
+    left, right = min(left, line.left), max(right, line.right)
+    top, bottom = min(top, line.top), max(bottom, line.bottom)
     return replace(line, left=int(left), top=int(top), right=int(right), bottom=int(bottom))
 
 
@@ -100,7 +102,9 @@ def prepare_lines(image, lines):
             cols = np.flatnonzero(warm.sum(axis=0) >= 2)
             # Detect a detached warm marker even if OCR omitted its symbol.
             if (len(cols) and cols[-1] < limit-3
-                    and (text != line.text or cols[-1]-cols[0]+1 <= (line.bottom-line.top)*.65)):
+                    and (text != line.text or
+                         (np.percentile(part.mean(axis=2), 25) > 140
+                          and cols[-1]-cols[0]+1 <= (line.bottom-line.top)*.65))):
                 start = int(cols[-1])+3
                 ink = np.max(np.abs(crop-np.percentile(crop, 85, axis=(0,1))), axis=2) > 30
                 following = np.flatnonzero(ink[:, start:].sum(axis=0) >= 2)
@@ -109,15 +113,17 @@ def prepare_lines(image, lines):
                 line = replace(line, left=line.left+start, text=text)
         result.append(line)
     # Windows sometimes returns an isolated drop-cap/article beside its line.
-    for i in range(len(result)-1):
+    for i in range(len(result)):
         first = result[i]
-        if not first.text or len(first.text.strip()) > 3:
+        if not first.text or not first.text.strip().isalpha() or len(first.text.strip()) > 3:
             continue
         h = first.bottom-first.top
-        for j in range(i+1, len(result)):
+        for j in range(len(result)):
+            if j == i:
+                continue
             other = result[j]
-            if other.top > first.bottom:
-                break
+            if not other.text:
+                continue
             overlap = min(first.bottom, other.bottom)-max(first.top, other.top)
             if overlap >= .7*min(h, other.bottom-other.top) and 0 <= other.left-first.right <= h:
                 result[j] = replace(other, text=first.text+' '+other.text,
