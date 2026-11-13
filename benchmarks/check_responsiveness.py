@@ -3,30 +3,35 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from queue import Queue
-import sys
 from tempfile import TemporaryDirectory
 from time import perf_counter
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, os.environ.get("TRANSCR_BENCH_CODE_ROOT", str(Path(__file__).resolve().parents[1])))
+sys.path.insert(
+    0,
+    os.environ.get("TRANSCR_BENCH_CODE_ROOT", str(Path(__file__).resolve().parents[1])),
+)
 
 import numpy as np
 from PIL import Image
 
+from benchmarks.run_pipeline import ImageCapture, ReplayTranslator
 from core.application import Application
 from core.config import AppConfig
 from core.pipeline import RuntimeBundle
-from modules.ocr.windows_ocr import WindowsOCRModule
 from modules.ocr.ocr_worker import OCRWorker
+from modules.ocr.windows_ocr import WindowsOCRModule
+from modules.translation.catalog import PROVIDER_LABELS
 from modules.translation.translator import Translator
-from benchmarks.run_pipeline import ImageCapture, ReplayTranslator
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--provider", choices=tuple(PROVIDER_LABELS), default="google")
     parser.add_argument("--replay", type=Path)
     parser.add_argument(
         "--output", type=Path, default=Path("test/benchmarks/responsiveness.json")
@@ -58,10 +63,10 @@ def main():
         translator = (
             ReplayTranslator(args.replay)
             if args.replay
-            else Translator(provider="google")
+            else Translator(provider=args.provider)
         )
         app._runtime = RuntimeBundle(
-            ("windows", "google", False, "argos", False), worker, queue, translator
+            ("windows", args.provider, False, "argos", False), worker, queue, translator
         )
         app._active = True
         gaps = []
@@ -79,6 +84,7 @@ def main():
                 timed_out=timed_out,
                 status=app.status_var.get(),
                 replayed_translation=args.replay is not None,
+                provider=args.provider,
             )
             app.shutdown()
 

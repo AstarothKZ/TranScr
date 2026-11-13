@@ -492,7 +492,9 @@ class Application:
                 argos_ready = translator.check_language()
                 if argos_ready:
                     self._append_log('Загружаю офлайн-модель перед первым захватом…')
-                    translator.warmup()
+            if argos_ready:
+                # Prepare the HTTP/TLS client in this startup worker too.
+                translator.warmup()
 
             runtime = RuntimeBundle(
                 settings=settings,

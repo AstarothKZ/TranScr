@@ -8,9 +8,9 @@ py -3.11 -m venv .venv
 
 Для последующих запусков достаточно последней команды. Windows OCR требует установленного английского языка распознавания `en-US`.
 
-Google Translate работает без ключа. Выберите Google Translate в настройках основным или резервным переводчиком; дополнительные пакеты не нужны. Для Yandex Cloud скопируйте `.env.example` в `.env` и заполните `YANDEX_API_KEY` и `YC_FOLDER_ID`.
+Google Translate работает без ключа. Выберите Google Translate в настройках основным или резервным переводчиком; дополнительные пакеты не нужны. Для Yandex Cloud скопируйте `.env.example` в `.env` и заполните `YANDEX_API_KEY`; `YC_FOLDER_ID` необязателен для API-ключа сервисного аккаунта.
 
-Google подключён через веб-адреса без ключа, аналогично [Translumo](https://github.com/ramjke/Translumo/blob/master/src/Translumo.Translation/Google/GoogleTranslator.cs). При ошибке используется резервный Google-адрес; успешный адрес переиспользуется в текущем сеансе.
+Google подключён через веб-адреса без ключа, аналогично [Translumo](https://github.com/ramjke/Translumo/blob/master/src/Translumo.Translation/Google/GoogleTranslator.cs). Сначала отправляются пакеты; при ошибке доступны отдельные запросы и резервный Google-адрес. После сетевой ошибки адрес временно исключается из повторных попыток.
 
 ## Использование
 
@@ -34,21 +34,22 @@ PaddleOCR и офлайн-перевод Argos — дополнительные 
 
 Зависимости: `requirements.txt` нужен для основного запуска; `requirements-optional.txt` — только для PaddleOCR и Argos. Tkinter входит в установку Python, отдельно через pip не устанавливается.
 
-Быстрый режим включён по умолчанию: весь кадр переводится пакетами, без скрытых повторных запросов для отдельных английских фрагментов. При необходимости включите «Дорабатывать неполный перевод (медленнее)». Argos загружает модель в фоне при запуске компонента, до первого захвата.
+Быстрый режим включён по умолчанию: весь кадр переводится пакетами, без скрытых повторных запросов для отдельных английских фрагментов. При необходимости включите «Дорабатывать неполный перевод (медленнее)». HTTP-клиент или модель Argos готовятся в фоне при запуске компонента, до первого захвата. Готовый резервный перевод хранится 30 секунд; после истечения срока следующий перевод снова обращается к основному провайдеру.
 
 ## Текущее состояние
 
-[Анализ проекта от 13 ноября 2026 года](docs/project-review.md): соответствие целевым функциям, сравнение с аналогами, замеры на десяти исходных изображениях, ограничения конвейера и порядок дальнейшей работы.
-
-[Результаты оптимизации скорости](docs/performance-report.md): три переводчика на исходнике №5, Windows OCR / PaddleOCR + Google на №5 и №6, проверка отзывчивости интерфейса и воспроизводимые замеры.
+[Модуль перевода: итоговые правки и замеры на №6](docs/translation-module.md): поведение Google, Yandex и Argos, кэш, отмена, резервный перевод, ограничения и команды проверок. Числа сохранены в `benchmarks/results/translation-final-2026-11-13.json`.
 
 ## Проверки и замеры
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 
-# Реальный онлайн-перевод: 3 переводчика, Windows OCR, исходник №5
-.venv\Scripts\python.exe benchmarks\run_pipeline.py --phase providers --suite providers
+# Windows OCR + все 3 переводчика на №6: два запуска и повторный кадр
+.venv\Scripts\python.exe benchmarks\run_pipeline.py --phase providers --suite providers --images 6 --repeat 2 --cached --strict
+
+# Один OCR-пакет: первый перевод, повтор без кэша, попадание в кэш
+.venv\Scripts\python.exe benchmarks\benchmark_translation.py --phase translation-module
 
 # Windows OCR / PaddleOCR + Google, исходники №5 и №6, включая повторный кадр
 .venv\Scripts\python.exe benchmarks\run_pipeline.py --phase pipeline --suite pipeline --repeat 2 --cached
@@ -58,11 +59,10 @@ PaddleOCR и офлайн-перевод Argos — дополнительные 
 
 Для сравнения CPU-части на одинаковых переводах используйте `--replay-dir test/benchmarks/<предыдущий phase>`. Повторный кадр и повторный текст измеряются отдельно от первого перевода; между обычными повторами переводчик создаётся заново. Реальные сервисы расходуют свои квоты.
 
-Дополнительные тесты Tk/Windows и исключения оверлея из MSS-захвата:
+Проверка отзывчивости настоящего окна приложения во время OCR и перевода:
 
 ```powershell
-$env:TRANSCR_NATIVE_TESTS = '1'
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe benchmarks\check_responsiveness.py --provider google --image C:\Users\qwert\OneDrive\Desktop\исходное-6.png
 ```
 
 Параметры для сравнения на другой машине: `TRANSCR_PADDLE_THREADS` (по умолчанию 2 CPU-потока), `ARGOS_BEAM_SIZE` (2), `ARGOS_COMPUTE_TYPE` (`int8` для CPU), `ARGOS_INTRA_THREADS` (до 4). `TRANSCR_HTTP2=0` отключает HTTP/2 для диагностики сети. Эти переменные можно задать в `.env`.

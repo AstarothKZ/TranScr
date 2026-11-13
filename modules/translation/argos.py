@@ -1,21 +1,68 @@
 """Argos Translate provider for offline translation."""
 
-from pathlib import Path
 import os
-from threading import RLock
-from tkinter import filedialog, messagebox
+import re
+from pathlib import Path
+from threading import Event, RLock
+from time import perf_counter
 
-from .batching import RequestBudget, join_parts, text_parts
+from .batching import RequestBudget, TextPart, join_parts, validate_timeout
+from .text_chunks import split_text
+
+_SENTENCE_GAP = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+_ABBREVIATIONS = frozenset(
+    {
+        "mr.",
+        "mrs.",
+        "ms.",
+        "dr.",
+        "prof.",
+        "capt.",
+        "col.",
+        "gen.",
+        "lt.",
+        "sgt.",
+        "st.",
+        "no.",
+        "co.",
+        "vs.",
+        "e.g.",
+        "i.e.",
+    }
+)
+
+
+def sentence_parts(texts, language="en"):
+    """Keep sentence boundaries and identifiers without loading an NLP model."""
+    parts = []
+    for owner, text in enumerate(texts):
+        start = 0
+        boundaries = _SENTENCE_GAP.finditer(text) if language == "en" else ()
+        for boundary in boundaries:
+            prefix = text[start : boundary.start()]
+            previous = prefix.rsplit(maxsplit=1)[-1] if prefix.strip() else ""
+            if previous.lower() in _ABBREVIATIONS or re.fullmatch(
+                r"(?:[A-Z]\.)+", previous
+            ):
+                continue
+            parts.extend(TextPart(owner, value) for value in split_text(prefix, 1000))
+            start = boundary.end()
+        parts.extend(TextPart(owner, value) for value in split_text(text[start:], 1000))
+    return parts
 
 
 class ArgosTranslateProvider:
-    def __init__(self, from_code: str = "en", to_code: str = "ru", root=None):
+    def __init__(
+        self, from_code: str = "en", to_code: str = "ru", root=None, *, timeout=15.0
+    ):
         self.from_code = from_code
         self.to_code = to_code
         self.root = root
+        self.timeout = validate_timeout(timeout)
         self._package = None
         self._engine = None
         self._lock = RLock()
+        self._stop = Event()
 
     def translate(self, text: str) -> str:
         result = self.translate_many([text])[0]
@@ -36,6 +83,8 @@ class ArgosTranslateProvider:
         )
 
     def _ensure_engine(self):
+        if self._stop.is_set():
+            raise RuntimeError("Переводчик уже закрыт")
         if self._engine is not None:
             return
         try:
@@ -67,8 +116,15 @@ class ArgosTranslateProvider:
         )
 
     def translate_many(self, texts, *, cancel=None, deadline=None):
-        budget = RequestBudget(cancel, deadline)
-        parts = text_parts(texts, 1000)
+        if self._stop.is_set():
+            raise RuntimeError("Переводчик уже закрыт")
+        own_deadline = perf_counter() + self.timeout
+        budget = RequestBudget(
+            cancel,
+            min(deadline, own_deadline) if deadline is not None else own_deadline,
+            self._stop,
+        )
+        parts = sentence_parts(texts, self.from_code)
         if not parts:
             return [""] * len(texts)
         try:
@@ -96,10 +152,17 @@ class ArgosTranslateProvider:
                 budget.check()
                 values = []
                 for result in translated:
-                    value = self._package.tokenizer.decode(result.hypotheses[0])
-                    if prefix and value.startswith(prefix):
-                        value = value[len(prefix) :]
-                    values.append(value.strip())
+                    try:
+                        value = self._package.tokenizer.decode(result.hypotheses[0])
+                        if prefix and value.startswith(prefix):
+                            value = value[len(prefix) :]
+                        values.append(value.strip())
+                    except (IndexError, AttributeError, TypeError, ValueError) as error:
+                        values.append(
+                            ValueError(
+                                f"Argos вернул некорректный сегмент: {type(error).__name__}"
+                            )
+                        )
                 return join_parts(texts, parts, values)
             finally:
                 self._lock.release()
@@ -117,6 +180,8 @@ class ArgosTranslateProvider:
             return False
 
     def manual_model_installation(self) -> bool:
+        from tkinter import filedialog, messagebox
+
         try:
             import argostranslate.package as argos_package
         except ImportError:
@@ -145,8 +210,13 @@ class ArgosTranslateProvider:
         if not path:
             return False
         try:
-            argos_package.install_from_path(Path(path))
-            self._engine = self._package = None
+            with self._lock:
+                if self._stop.is_set():
+                    raise RuntimeError("Переводчик уже закрыт")
+                argos_package.install_from_path(Path(path))
+                if self._engine is not None:
+                    self._engine.unload_model()
+                self._engine = self._package = None
         except Exception as error:
             print(f"Не удалось установить модель Argos: {error}", flush=True)
             return False
@@ -154,7 +224,9 @@ class ArgosTranslateProvider:
         return self.check_language()
 
     def close(self) -> None:
+        self._stop.set()
         with self._lock:
-            if self._engine is not None:
-                self._engine.unload_model()
-                self._engine = None
+            engine, self._engine = self._engine, None
+            self._package = None
+            if engine is not None:
+                engine.unload_model()

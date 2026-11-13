@@ -1,18 +1,20 @@
 """Batch-first translation facade with a frame budget, fallback and bounded cache."""
 
+import logging
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
-import logging
 from pathlib import Path
-import re
-from threading import Event, RLock
+from threading import Event, Lock, RLock
 from time import perf_counter
 
 from dotenv import load_dotenv
 
 from modules.text_processing.filters import untranslated_fragments
+
 from .argos import ArgosTranslateProvider
-from .batching import RequestBudget, TranslationCancelled
+from .base import TranslationProvider
+from .batching import RequestBudget, TranslationCancelled, validate_timeout
 from .catalog import PROVIDER_LABELS
 from .google import GoogleTranslateProvider
 from .yandex import YandexTranslateProvider
@@ -35,12 +37,17 @@ class TranslationStats:
     requests: int = 0
     incomplete: int = 0
     expires_at: float | None = None
+    fallback_texts: int = 0
+    errors: int = 0
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class CacheEntry:
     text: str
     expires_at: float | None = None
+    incomplete: bool = False
+    fallback_used: bool = False
 
 
 class Translator:
@@ -48,6 +55,7 @@ class Translator:
     CACHE_SIZE = 2048
     CACHE_CHARS = 1_000_000
     PARTIAL_CACHE_TTL = 30.0
+    FALLBACK_CACHE_TTL = 30.0
 
     def __init__(
         self,
@@ -60,12 +68,22 @@ class Translator:
         fallback_provider="argos",
         repair_incomplete=False,
     ):
-        if timeout <= 0:
-            raise ValueError("Время перевода должно быть положительным")
+        timeout = validate_timeout(timeout)
+        if (
+            not isinstance(from_code, str)
+            or not from_code.strip()
+            or not isinstance(to_code, str)
+            or not to_code.strip()
+        ):
+            raise ValueError("Коды языков должны быть непустыми строками")
         self._validate(provider, fallback_provider)
         if provider == fallback_provider:
             fallback_provider = "argos" if provider != "argos" else "google"
-        self.from_code, self.to_code, self.root = from_code, to_code, root
+        self.from_code, self.to_code, self.root = (
+            from_code.strip(),
+            to_code.strip(),
+            root,
+        )
         self.provider, self.timeout = provider, timeout
         self.hybrid_enabled, self.fallback_provider = (
             bool(hybrid_enabled),
@@ -75,14 +93,15 @@ class Translator:
         self._cache = OrderedDict()
         self._cache_chars = 0
         self._cache_lock, self._provider_lock = RLock(), RLock()
-        self._google_provider = self._yandex_provider = self._argos_provider = None
+        self._call_lock = Lock()
+        self._stop = Event()
+        self._providers: dict[str, TranslationProvider] = {}
         self.last_stats = TranslationStats()
-        self._closed = False
 
     @classmethod
     def _validate(cls, selected, fallback):
         for value in (selected, fallback):
-            if value not in cls.PROVIDERS:
+            if not isinstance(value, str) or value not in cls.PROVIDERS:
                 raise ValueError(f"Неизвестный переводчик: {value}")
 
     def _cache_key(self, text, selected=None, hybrid=None, fallback=None):
@@ -96,18 +115,21 @@ class Translator:
             self.repair_incomplete,
         )
 
-    def _remember(self, key, value):
-        if not value.strip() or self._closed:
-            return None
-        expires_at = (
-            perf_counter() + self.PARTIAL_CACHE_TTL
-            if untranslated_fragments(value)
-            else None
+    def _remember(self, key, value, *, fallback_used=False):
+        incomplete = (
+            bool(untranslated_fragments(value))
+            if self.from_code == "en" and self.to_code == "ru"
+            else False
         )
-        entry = CacheEntry(value, expires_at)
+        ttl = min(
+            self.PARTIAL_CACHE_TTL if incomplete else float("inf"),
+            self.FALLBACK_CACHE_TTL if fallback_used else float("inf"),
+        )
+        expires_at = perf_counter() + ttl if ttl != float("inf") else None
+        entry = CacheEntry(value, expires_at, incomplete, fallback_used)
         with self._cache_lock:
-            if self._closed:
-                return None
+            if not value.strip() or self._stop.is_set():
+                return entry
             previous = self._cache.pop(key, None)
             if previous is not None:
                 self._cache_chars -= len(key[3]) + len(previous.text)
@@ -119,7 +141,7 @@ class Translator:
             ):
                 old_key, old = self._cache.popitem(last=False)
                 self._cache_chars -= len(old_key[3]) + len(old.text)
-        return expires_at
+        return entry
 
     def translate_many(
         self,
@@ -130,20 +152,70 @@ class Translator:
         hybrid_enabled=None,
         fallback_provider=None,
     ):
-        if self._closed:
+        started = perf_counter()
+        if self._stop.is_set():
             raise RuntimeError("Переводчик уже закрыт")
-        selected = provider or self.provider
+        selected = self.provider if provider is None else provider
         use_hybrid = (
             self.hybrid_enabled if hybrid_enabled is None else bool(hybrid_enabled)
         )
-        fallback = fallback_provider or self.fallback_provider
+        fallback = (
+            self.fallback_provider if fallback_provider is None else fallback_provider
+        )
         self._validate(selected, fallback)
         use_hybrid = use_hybrid and selected != fallback
-        budget = RequestBudget(cancel, perf_counter() + self.timeout)
-        originals = list(dict.fromkeys(text.strip() for text in texts if text.strip()))
+        budget = RequestBudget(cancel, started + self.timeout, self._stop)
+        if isinstance(texts, (str, bytes)):
+            raise TypeError("Ожидается последовательность строк, а не одна строка")
+        originals = []
+        for text in texts:
+            if not isinstance(text, str):
+                raise TypeError("Каждый исходный текст должен быть строкой")
+            if text.strip():
+                originals.append(text.strip())
+        originals = list(dict.fromkeys(originals))
         normalized = {source: normalize_text(source) for source in originals}
         unique = list(dict.fromkeys(normalized.values()))
         stats = TranslationStats(unique_texts=len(unique))
+        acquired = False
+        try:
+            budget.check()
+            while not self._call_lock.acquire(timeout=0.05):
+                budget.check()
+            acquired = True
+            budget.check()
+            return self._translate_many(
+                originals,
+                normalized,
+                unique,
+                selected,
+                use_hybrid,
+                fallback,
+                budget,
+                stats,
+                started,
+            )
+        except (TranslationCancelled, TimeoutError) as error:
+            stats.errors = len(unique)
+            stats.elapsed_ms = (perf_counter() - started) * 1000
+            self.last_stats = stats
+            return {source: error for source in originals}
+        finally:
+            if acquired:
+                self._call_lock.release()
+
+    def _translate_many(
+        self,
+        originals,
+        normalized,
+        unique,
+        selected,
+        use_hybrid,
+        fallback,
+        budget,
+        stats,
+        started,
+    ):
         values, missing = {}, []
         for text in unique:
             key = self._cache_key(text, selected, use_hybrid, fallback)
@@ -158,21 +230,30 @@ class Translator:
                             stats.expires_at = min(
                                 stats.expires_at or entry.expires_at, entry.expires_at
                             )
-                            stats.incomplete += 1
+                        stats.incomplete += int(entry.incomplete)
+                        stats.fallback_texts += int(entry.fallback_used)
                         continue
                     self._cache.pop(key)
                     self._cache_chars -= len(key[3]) + len(entry.text)
                 missing.append(text)
         requests_before = self._request_count()
         if missing:
-            primary = self._provider_many(selected, missing, budget)
+            primary_budget = RequestBudget(
+                budget.cancel,
+                budget.deadline - min(5.0, self.timeout / 3)
+                if use_hybrid
+                else budget.deadline,
+                budget.stop,
+            )
+            primary = self._provider_many(selected, missing, primary_budget)
             values.update(zip(missing, primary))
             failed = [
                 text
                 for text in missing
                 if isinstance(values[text], Exception)
-                and not isinstance(values[text], (TranslationCancelled, TimeoutError))
+                and not isinstance(values[text], TranslationCancelled)
             ]
+            fallback_used = set()
             if use_hybrid and failed:
                 reserve = self._provider_many(fallback, failed, budget)
                 for text, result in zip(failed, reserve):
@@ -182,6 +263,7 @@ class Translator:
                         )
                     else:
                         values[text] = result
+                        fallback_used.add(text)
             if (
                 self.repair_incomplete
                 and self.from_code == "en"
@@ -191,23 +273,30 @@ class Translator:
             for text in missing:
                 value = values[text]
                 if isinstance(value, str):
-                    if untranslated_fragments(value):
-                        stats.incomplete += 1
-                    expires_at = self._remember(
-                        self._cache_key(text, selected, use_hybrid, fallback), value
+                    entry = self._remember(
+                        self._cache_key(text, selected, use_hybrid, fallback),
+                        value,
+                        fallback_used=text in fallback_used,
                     )
-                    if expires_at is not None:
+                    stats.incomplete += int(entry.incomplete)
+                    stats.fallback_texts += int(entry.fallback_used)
+                    if entry.expires_at is not None:
                         stats.expires_at = min(
-                            stats.expires_at or expires_at, expires_at
+                            stats.expires_at or entry.expires_at, entry.expires_at
                         )
         stats.requests = self._request_count() - requests_before
+        stats.errors = sum(isinstance(value, Exception) for value in values.values())
+        stats.elapsed_ms = (perf_counter() - started) * 1000
         self.last_stats = stats
         LOGGER.info(
-            "Перевод: HTTP %d; кэш %d/%d; неполных %d",
+            "Перевод: %.0f мс; HTTP %d; кэш %d/%d; резерв %d; неполных %d; ошибок %d",
+            stats.elapsed_ms,
             stats.requests,
             stats.cache_hits,
             stats.unique_texts,
+            stats.fallback_texts,
             stats.incomplete,
+            stats.errors,
         )
         return {source: values[normalized[source]] for source in originals}
 
@@ -234,7 +323,7 @@ class Translator:
         # One additional batch, not up to three serial requests for every region.
         # Keep a separate short budget for this optional quality pass.
         repair_budget = RequestBudget(
-            budget.cancel, min(budget.deadline, perf_counter() + 2)
+            budget.cancel, min(budget.deadline, perf_counter() + 2), budget.stop
         )
         candidates = []
         for text in texts:
@@ -263,6 +352,8 @@ class Translator:
     def translate_text(
         self, text, provider=None, *, hybrid_enabled=None, fallback_provider=None
     ):
+        if not isinstance(text, str):
+            raise TypeError("Исходный текст должен быть строкой")
         source = text.strip()
         if not source:
             return ""
@@ -282,55 +373,59 @@ class Translator:
             "yandex": YandexTranslateProvider,
             "argos": ArgosTranslateProvider,
         }
-        field = f"_{selected}_provider"
         with self._provider_lock:
-            if self._closed:
+            if self._stop.is_set():
                 raise RuntimeError("Переводчик уже закрыт")
-            instance = getattr(self, field)
+            instance = self._providers.get(selected)
             if instance is None:
                 if selected == "argos":
                     instance = constructors[selected](
-                        self.from_code, self.to_code, self.root
+                        self.from_code, self.to_code, self.root, timeout=self.timeout
                     )
                 else:
                     instance = constructors[selected](
                         self.from_code, self.to_code, self.timeout
                     )
-                setattr(self, field, instance)
+                self._providers[selected] = instance
             return instance
 
     def _request_count(self):
+        with self._provider_lock:
+            instances = list(self._providers.values())
         return sum(
             getattr(
-                getattr(getattr(self, f"_{name}_provider"), "_client", None),
+                getattr(instance, "_client", None),
                 "transcr_requests",
                 0,
             )
-            for name in self.PROVIDERS
+            for instance in instances
         )
 
     def check_language(self):
         return self._get_provider("argos").check_language()
 
     def warmup(self):
+        instance = self._get_provider(self.provider)
         if self.provider == "argos":
-            self._get_provider("argos").warmup()
+            instance.warmup()
 
     def manual_model_installation(self):
         return self._get_provider("argos").manual_model_installation()
 
-    def close(self):
-        with self._provider_lock:
-            if self._closed:
-                return
-            self._closed = True
-        for name in self.PROVIDERS:
-            instance = getattr(self, f"_{name}_provider")
-            if instance is not None:
-                try:
-                    instance.close()
-                except Exception:
-                    LOGGER.exception("Не удалось закрыть переводчик %s", name)
+    def clear_cache(self):
         with self._cache_lock:
             self._cache.clear()
             self._cache_chars = 0
+
+    def close(self):
+        with self._provider_lock:
+            if self._stop.is_set():
+                return
+            self._stop.set()
+            instances = list(self._providers.items())
+        for name, instance in instances:
+            try:
+                instance.close()
+            except Exception:
+                LOGGER.exception("Не удалось закрыть переводчик %s", name)
+        self.clear_cache()

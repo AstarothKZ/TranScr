@@ -1,22 +1,21 @@
 """Yandex Cloud Translate provider."""
 
 import os
-from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
+from .base import NetworkProvider
 from .batching import (
     RequestBudget,
+    ServiceCooldown,
     batch_results,
-    make_client,
     map_bounded,
     pack_parts,
     text_parts,
-    ServiceCooldown,
 )
 
 
-class YandexTranslateProvider:
+class YandexTranslateProvider(NetworkProvider):
     API_URL = "https://translate.api.cloud.yandex.net/translate/v2/translate"
     MAX_CHARS = 10_000
 
@@ -25,24 +24,14 @@ class YandexTranslateProvider:
     ):
         self.from_code = from_code
         self.to_code = to_code
-        self.timeout = timeout
         self._cooldown = ServiceCooldown("Yandex")
-        self._client = make_client(timeout)
-        self._executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="transcr-yandex"
-        )
-
-    def translate(self, text: str) -> str:
-        result = self.translate_many([text])[0]
-        if isinstance(result, Exception):
-            raise result
-        return result
+        super().__init__(timeout, 2, "transcr-yandex")
 
     def translate_many(
         self, texts: list[str], *, cancel=None, deadline=None
     ) -> list[str | Exception]:
         """Batch independent regions without merging their text or coordinates."""
-        budget = RequestBudget(cancel, deadline)
+        budget = self._budget(cancel, deadline)
         parts = text_parts(texts, self.MAX_CHARS)
         batches = pack_parts(parts, self.MAX_CHARS)
 
@@ -71,28 +60,26 @@ class YandexTranslateProvider:
         budget.check()
         api_key = os.getenv("YANDEX_API_KEY", "").strip()
         folder_id = os.getenv("YC_FOLDER_ID", "").strip()
-        if not api_key or not folder_id:
+        if not api_key:
             raise RuntimeError(
-                "Для Яндекс-переводчика задайте YANDEX_API_KEY и YC_FOLDER_ID "
+                "Для Яндекс-переводчика задайте YANDEX_API_KEY "
                 "в файле .env. Пример находится в .env.example."
             )
 
         body = {
-            "folderId": folder_id,
             "texts": texts,
             "sourceLanguageCode": self.from_code,
             "targetLanguageCode": self.to_code,
         }
+        if folder_id:
+            body["folderId"] = folder_id
         try:
-            response = self._client.post(
+            payload = self._post_json(
                 self.API_URL,
+                budget,
                 json=body,
                 headers={"Authorization": f"Api-Key {api_key}"},
-                timeout=budget.timeout(self.timeout),
             )
-            response.raise_for_status()
-            payload = response.json()
-            budget.check()
         except httpx.HTTPStatusError as error:
             raise RuntimeError(
                 f"Yandex Cloud вернул HTTP {error.response.status_code}"
@@ -114,7 +101,3 @@ class YandexTranslateProvider:
             else ValueError("Yandex Cloud вернул пустой или некорректный перевод")
             for item in translations
         ]
-
-    def close(self) -> None:
-        self._executor.shutdown(wait=True, cancel_futures=True)
-        self._client.close()

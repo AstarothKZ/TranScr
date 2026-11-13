@@ -2,29 +2,52 @@
 
 from __future__ import annotations
 
+import logging
+import math
+import os
+import ssl
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from functools import lru_cache
 from importlib.util import find_spec
-from threading import Event
-from threading import Lock
-import logging
-import os
-import math
+from threading import Event, Lock
 from time import perf_counter
 from typing import Callable, TypeVar
 
+import certifi
 import httpx
 
 from .text_chunks import split_text
 
 T = TypeVar("T")
 R = TypeVar("R")
+_SSL_LOCK = Lock()
+
+
+@lru_cache(maxsize=4)
+def _ssl_context(cafile: str | None, capath: str | None) -> ssl.SSLContext:
+    # HTTPX otherwise reloads the same CA bundle for every proxy transport.
+    # Build once, then use the context for independent client connection pools.
+    return ssl.create_default_context(
+        cafile=cafile or (None if capath else certifi.where()), capath=capath
+    )
 
 
 class TranslationCancelled(RuntimeError):
     pass
+
+
+def validate_timeout(value: float) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("Время перевода должно быть конечным положительным числом")
+    return float(value)
 
 
 class ProviderUnavailable(RuntimeError):
@@ -106,10 +129,17 @@ class ServiceCooldown:
 class RequestBudget:
     cancel: Event | None = None
     deadline: float | None = None
+    stop: Event | None = None
+
+    def __post_init__(self):
+        if self.deadline is not None and not math.isfinite(self.deadline):
+            raise ValueError("Дедлайн должен быть конечным числом")
 
     def check(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
             raise TranslationCancelled("Перевод отменён")
+        if self.stop is not None and self.stop.is_set():
+            raise TranslationCancelled("Переводчик закрыт")
         if self.deadline is not None and perf_counter() >= self.deadline:
             raise TimeoutError("Истекло время перевода кадра")
 
@@ -130,6 +160,14 @@ class RequestBudget:
 
 
 def make_client(timeout: float, **kwargs) -> httpx.Client:
+    if "verify" not in kwargs:
+        trust_env = kwargs.get("trust_env", True)
+        cafile = (os.getenv("SSL_CERT_FILE") or None) if trust_env else None
+        capath = (
+            (os.getenv("SSL_CERT_DIR") or None) if trust_env and not cafile else None
+        )
+        with _SSL_LOCK:
+            kwargs["verify"] = _ssl_context(cafile, capath)
     lock = Lock()
 
     def started(request):
@@ -169,11 +207,11 @@ class TextPart:
     text: str
 
 
-def text_parts(texts: list[str], limit: int, *, utf8_bytes=False) -> list[TextPart]:
+def text_parts(texts: list[str], limit: int) -> list[TextPart]:
     return [
         TextPart(index, part)
         for index, text in enumerate(texts)
-        for part in split_text(text, limit, utf8_bytes=utf8_bytes)
+        for part in split_text(text, limit)
     ]
 
 
@@ -184,6 +222,8 @@ def pack_parts(
         raise ValueError("Лимиты пакета должны быть положительными")
     batches, batch, size = [], [], 0
     for part in parts:
+        if len(part.text) > limit:
+            raise ValueError("Часть текста превышает размер пакета")
         if batch and (size + len(part.text) > limit or len(batch) >= max_items):
             batches.append(batch)
             batch, size = [], 0
@@ -201,11 +241,20 @@ def join_parts(
         raise ValueError("Неверное количество результатов перевода")
     groups: list[list[str | Exception]] = [[] for _ in texts]
     for part, value in zip(parts, values):
+        if not 0 <= part.owner < len(texts):
+            raise ValueError("Неверный индекс исходного текста")
+        if (
+            not isinstance(value, (str, Exception))
+            or isinstance(value, str)
+            and not value.strip()
+        ):
+            value = ValueError("Переводчик вернул пустой или некорректный результат")
         groups[part.owner].append(value)
-    return [
-        next((v for v in group if isinstance(v, Exception)), None) or "\n".join(group)
-        for group in groups
-    ]
+    results = []
+    for group in groups:
+        error = next((value for value in group if isinstance(value, Exception)), None)
+        results.append(error if error is not None else "\n".join(group))
+    return results
 
 
 def map_bounded(
@@ -216,6 +265,8 @@ def map_bounded(
     workers: int,
 ) -> list[R | Exception]:
     """Never enqueue a whole frame; cancellation returns without waiting on its tail."""
+    if workers < 1:
+        raise ValueError("Число параллельных задач должно быть положительным")
     results: list[R | Exception] = [
         TranslationCancelled("Перевод не выполнен") for _ in items
     ]
@@ -238,8 +289,14 @@ def map_bounded(
                     results[index] = error
     except (TranslationCancelled, TimeoutError) as error:
         for future, index in pending.items():
-            future.cancel()
-            results[index] = error
+            if future.done() and not future.cancelled():
+                try:
+                    results[index] = future.result()
+                except Exception as finished_error:
+                    results[index] = finished_error
+            else:
+                future.cancel()
+                results[index] = error
         for index in range(position, len(items)):
             results[index] = error
     return results

@@ -1,20 +1,18 @@
 """Keyless Google region batches, with validated mapping and reserve URLs."""
 
-from concurrent.futures import ThreadPoolExecutor
-from threading import Lock, BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from time import perf_counter
 
 import httpx
 
+from .base import NetworkProvider
 from .batching import (
-    RequestBudget,
     TranslationCancelled,
     join_parts,
-    make_client,
     map_bounded,
     pack_parts,
-    text_parts,
     retry_delay,
+    text_parts,
 )
 
 
@@ -22,7 +20,7 @@ class GoogleTranslateError(RuntimeError):
     """No healthy Google endpoint returned a usable translation."""
 
 
-class GoogleTranslateProvider:
+class GoogleTranslateProvider(NetworkProvider):
     MAX_CHARS = 4000
     MAX_BATCH_ITEMS = 16
     ENDPOINTS = (
@@ -31,16 +29,15 @@ class GoogleTranslateProvider:
     )
 
     def __init__(self, from_code="en", to_code="ru", timeout=15.0):
-        self.from_code, self.to_code, self.timeout = from_code, to_code, timeout
+        self.from_code, self.to_code = from_code, to_code
         self._state_lock = Lock()
         self._slots = BoundedSemaphore(2)
         self._cooldowns = {}
         self._batch_disabled_until = 0.0
-        self._executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="transcr-google"
-        )
-        self._client = make_client(
+        super().__init__(
             timeout,
+            2,
+            "transcr-google",
             follow_redirects=True,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -49,14 +46,8 @@ class GoogleTranslateProvider:
             },
         )
 
-    def translate(self, text):
-        result = self.translate_many([text])[0]
-        if isinstance(result, Exception):
-            raise result
-        return result
-
     def translate_many(self, texts, *, cancel=None, deadline=None):
-        budget = RequestBudget(cancel, deadline)
+        budget = self._budget(cancel, deadline)
         parts = text_parts(texts, self.MAX_CHARS)
         batches = pack_parts(parts, self.MAX_CHARS, self.MAX_BATCH_ITEMS)
         values = map_bounded(
@@ -80,7 +71,13 @@ class GoogleTranslateProvider:
                     retry_parts.extend(batch)
                     translated.extend([value] * len(batch))
             else:
-                translated.extend(value)
+                for item, part in zip(value, batch):
+                    if isinstance(item, Exception) and not isinstance(
+                        item, (TranslationCancelled, TimeoutError)
+                    ):
+                        retry_positions.append(len(translated))
+                        retry_parts.append(part)
+                    translated.append(item)
         retried = map_bounded(
             self._executor,
             lambda part: self._translate_single(part.text, budget),
@@ -120,15 +117,12 @@ class GoogleTranslateProvider:
             }
             if index == 0:
                 params["dt"] = "t"
-            response = self._client.post(
+            return self._post_json(
                 url,
+                budget,
                 params=params,
                 data={"q": texts},
-                timeout=budget.timeout(self.timeout),
             )
-            response.raise_for_status()
-            budget.check()
-            return response.json()
         except (httpx.HTTPError, ValueError) as error:
             delay = 5.0
             if isinstance(error, httpx.HTTPStatusError):
@@ -163,11 +157,14 @@ class GoogleTranslateProvider:
                 continue
             try:
                 payload = self._post(index, text, budget)
-                return (
+                value = (
                     self._parse(payload)
                     if index == 0
                     else self._parse_batch(payload, 1)[0]
                 )
+                if isinstance(value, Exception):
+                    raise value
+                return value
             except (TranslationCancelled, TimeoutError):
                 raise
             except (httpx.HTTPError, ValueError, GoogleTranslateError) as error:
@@ -192,9 +189,11 @@ class GoogleTranslateProvider:
         for item in payload:
             # With sl=auto, Chrome returns [translated text, detected language].
             value = item[0] if isinstance(item, list) and len(item) == 2 else item
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError("Google вернул пустой или некорректный перевод")
-            values.append(value.strip())
+            values.append(
+                value.strip()
+                if isinstance(value, str) and value.strip()
+                else ValueError("Google вернул пустой или некорректный перевод")
+            )
         return values
 
     @staticmethod
@@ -218,7 +217,3 @@ class GoogleTranslateProvider:
         if not result:
             raise ValueError("Google returned empty text")
         return result
-
-    def close(self):
-        self._executor.shutdown(wait=True, cancel_futures=True)
-        self._client.close()
