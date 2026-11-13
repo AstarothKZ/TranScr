@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import threading
 from dataclasses import dataclass, field, replace
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Empty, Queue
 from time import perf_counter
@@ -16,13 +17,16 @@ from modules.capture.types import ScreenBounds
 from modules.ocr.ocr_worker import OCRWorker
 from modules.ocr.types import OCRText
 from modules.text_processing.geometry import prepare_lines
-from modules.overlay.background import BackgroundStyle, prepare_background
-from modules.text_processing.filters import (
-    should_translate, translation_changed, untranslated_fragments,
-)
+from modules.overlay.background import prepare_background
+from modules.overlay.preparation import PreparedOverlay, prepare_overlay
+from modules.translation.batching import TranslationCancelled
+from modules.text_processing.filters import should_translate, translation_changed
 from modules.text_processing.image_validation import has_source_ink
 from modules.text_processing.text_regions import (
-    TextRegion, group_ocr_texts, layout_slots, separate_row_overlaps,
+    TextRegion,
+    group_ocr_texts,
+    layout_slots,
+    separate_row_overlaps,
 )
 from modules.translation.translator import Translator
 
@@ -34,11 +38,16 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class RuntimeBundle:
-    settings: tuple[str, str, bool, str]
+    settings: tuple[str, str, bool, str, bool]
     ocr_worker: OCRWorker
     ocr_results: Queue
     translator: Translator
     argos_model_ready: bool = True
+    translation_executor: ThreadPoolExecutor = field(
+        default_factory=lambda: ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="transcr-frame-translation"
+        )
+    )
 
 
 @dataclass(slots=True)
@@ -54,8 +63,11 @@ class CaptureResult:
     screenshot_path: Path | None = None
     cache_hit: bool = False
     source_image: np.ndarray | None = None
-    backgrounds: dict[tuple[int, int, int, int], BackgroundStyle] = field(default_factory=dict)
     background_ms: float = 0.0
+    processing_ms: float = 0.0
+    overlay_prepare_ms: float = 0.0
+    overlay: PreparedOverlay | None = None
+    expires_at: float | None = None
 
 
 class FrameCache:
@@ -68,7 +80,9 @@ class FrameCache:
 
     @staticmethod
     def fingerprint(image) -> bytes:
-        return hashlib.blake2s(memoryview(np.ascontiguousarray(image)), digest_size=16).digest()
+        return hashlib.blake2b(
+            memoryview(np.ascontiguousarray(image)), digest_size=16
+        ).digest()
 
     def get(
         self,
@@ -80,12 +94,19 @@ class FrameCache:
         with self._lock:
             if self._last_key != (area, fingerprint) or self._last_result is None:
                 return None
+            if (
+                self._last_result.expires_at is not None
+                and perf_counter() >= self._last_result.expires_at
+            ):
+                return None
             return replace(
                 self._last_result,
                 capture_ms=capture_ms,
                 ocr_ms=0.0,
                 translate_ms=0.0,
                 background_ms=0.0,
+                processing_ms=0.0,
+                overlay_prepare_ms=0.0,
                 screenshot_path=screenshot_path,
                 cache_hit=True,
             )
@@ -175,6 +196,7 @@ def process_capture(
 
     # Filter individual OCR lines before grouping. Otherwise, a column of model
     # numbers/IDs next to real text could be merged into one translatable block.
+    processing_started = perf_counter()
     valid_lines = [item for item in recognized if has_source_ink(image, item)]
     if len(valid_lines) != len(recognized):
         LOGGER.info(
@@ -186,6 +208,7 @@ def process_capture(
     filtered_count = len(recognized) - len(meaningful_lines)
     regions = group_ocr_texts(meaningful_lines, context=valid_lines)
     eligible = [region for region in regions if should_translate(region.text)]
+    processing_ms = (perf_counter() - processing_started) * 1000
     LOGGER.info(
         "Фильтрация: исключено строк %d; сформировано текстовых областей %d",
         filtered_count,
@@ -218,14 +241,32 @@ def process_capture(
     )
     translated_by_text: dict[str, str] = {}
     errors: list[str] = []
-    for source, translated in runtime.translator.translate_many(
-        unique_texts, cancel
-    ).items():
+
+    def translate_frame():
+        values = runtime.translator.translate_many(unique_texts, cancel)
+        return values, (perf_counter() - translate_started) * 1000
+
+    future = runtime.translation_executor.submit(translate_frame)
+    # Source background reconstruction can run while network requests are in flight.
+    background_started = perf_counter()
+    backgrounds = {}
+    lines = separate_row_overlaps(
+        [line for region in eligible for line in layout_slots(region)]
+    )
+    for line in lines:
+        if cancel is not None and cancel.is_set():
+            future.cancel()
+            return cancelled_result()
+        box = (line.left, line.top, line.right, line.bottom)
+        if box not in backgrounds:
+            backgrounds[box] = prepare_background(image, box)
+    background_ms = (perf_counter() - background_started) * 1000
+    translations, translate_ms = future.result()
+    for source, translated in translations.items():
         if isinstance(translated, Exception):
             errors.append(f"{source[:48]!r}: {type(translated).__name__}: {translated}")
         elif translation_changed(source, translated):
             translated_by_text[source] = translated.strip()
-    translate_ms = (perf_counter() - translate_started) * 1000
     LOGGER.info(
         "Перевод завершён за %.0f мс; изменённых результатов: %d; ошибок: %d",
         translate_ms,
@@ -240,19 +281,27 @@ def process_capture(
     ]
     if cancel is not None and cancel.is_set():
         return cancelled_result()
-    background_started = perf_counter()
-    backgrounds = {}
-    lines = separate_row_overlaps([
-        line for region, _ in translated_regions for line in layout_slots(region)
-    ])
-    for line in lines:
-        if cancel is not None and cancel.is_set():
-            return cancelled_result()
-        box = (line.left, line.top, line.right, line.bottom)
-        if box not in backgrounds:
-            backgrounds[box] = prepare_background(image, box)
-    background_ms = (perf_counter() - background_started) * 1000
-    LOGGER.info("Восстановление фона: %.0f мс", background_ms)
+    prepare_started = perf_counter()
+    try:
+        overlay = prepare_overlay(
+            translated_regions,
+            (area[2], area[3]),
+            image,
+            backgrounds=backgrounds,
+            cancel=cancel,
+        )
+    except TranslationCancelled:
+        return cancelled_result()
+    overlay_prepare_ms = (perf_counter() - prepare_started) * 1000
+    background_ms += overlay.background_ms
+    LOGGER.info(
+        "Обработка текста: %.0f мс; фон: %.0f мс (параллельно переводу); "
+        "компоновка: %.0f мс; растр: %.0f мс",
+        processing_ms,
+        background_ms,
+        overlay.layout_ms,
+        overlay.raster_ms,
+    )
     result = CaptureResult(
         area=area,
         translated_regions=translated_regions,
@@ -264,8 +313,13 @@ def process_capture(
         errors=errors,
         source_image=image,
         screenshot_path=screenshot_path,
-        backgrounds=backgrounds,
         background_ms=background_ms,
+        processing_ms=processing_ms,
+        overlay_prepare_ms=overlay_prepare_ms,
+        overlay=overlay,
+        expires_at=getattr(
+            getattr(runtime.translator, "last_stats", None), "expires_at", None
+        ),
     )
     if (
         frame_cache is not None
@@ -275,7 +329,6 @@ def process_capture(
         )
         and not result.errors
         and not (cancel is not None and cancel.is_set())
-        and not any(untranslated_fragments(text) for _, text in translated_regions)
     ):
         frame_cache.put(area, fingerprint, result)
     return result

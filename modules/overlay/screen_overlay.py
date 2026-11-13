@@ -4,15 +4,9 @@ import ctypes
 import logging
 import os
 import tkinter as tk
-from dataclasses import replace
 
 from PIL import ImageTk
-from modules.overlay.fonts import PixelFont
-from modules.overlay.styling import preserve_case, estimate_bold, strengthen_color
-from modules.overlay.background import prepare_background
-from modules.overlay.rendering import render_row
-
-from modules.text_processing.text_regions import layout_slots, separate_row_overlaps
+from modules.overlay.preparation import DisplayStats, PreparedOverlay, prepare_overlay
 
 LOGGER = logging.getLogger("transcr.pipeline")
 
@@ -25,7 +19,6 @@ class ScreenOverlay:
     BOX_COLOR = "#ffffff"
 
     def __init__(self, root: tk.Tk) -> None:
-        self.root = root
         self.window = tk.Toplevel(root)
         self.window.withdraw()
         self.window.title("TranScr Overlay")
@@ -42,168 +35,70 @@ class ScreenOverlay:
         self.canvas.pack(fill="both", expand=True)
         self._images = []
         self._closed = False
+        self.visible = False
+        self.capture_excluded = False
+        self._prepared = None
+        self._screen_bounds = None
+        self._native_ready = False
 
     def clear(self) -> None:
-        """Hide the overlay and remove all prior translated blocks."""
-        if self._closed:
-            return
-        self.window.withdraw()
-        self.canvas.delete("all")
-        self._images = []
+        """Hide immediately; retain just the last raster for cheap exact-frame reuse."""
+        if not self._closed:
+            self.window.withdraw()
+            self.visible = False
 
-    def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None) -> None:
-        """Draw measured translations only inside their original OCR rows."""
-        from modules.overlay.layout import fit_region
-
+    def show(self, translated_regions, screen_bounds, source_image=None, backgrounds=None,
+             *, prepared: PreparedOverlay | None = None) -> DisplayStats:
         self.clear()
         left, top, width, height = screen_bounds
-        if width <= 0 or height <= 0:
-            raise ValueError(f"Некорректные размеры экрана: {screen_bounds}")
-        self.window.geometry(f"{width}x{height}+0+0")
-        self.window.update_idletasks()
-        occupied = []
-        accepted = []
-        prepared_layers = {}
-        prepared_styles = {}
-        fonts = {}
-
-        def make_font(size):
-            key = (size, bold)
-            if key not in fonts:
-                fonts[key] = PixelFont(size, bold=bold)
-            return fonts[key]
-        # Apply across region boundaries as well, including cached OCR output.
-        sources = [
-            line for region, _ in translated_regions for line in layout_slots(region)
-        ]
-        corrected = iter(separate_row_overlaps(sources))
-        translated_regions = [
-            (
-                replace(
-                    region, lines=tuple(next(corrected) for _ in layout_slots(region))
-                ),
-                text,
-            )
-            for region, text in translated_regions
-        ]
-        # Deterministic overlap policy; a whole region is accepted or rejected.
-        regions = sorted(
-            translated_regions,
-            key=lambda item: (
-                -sum(line.confidence or 0 for line in item[0].lines)
-                / max(1, len(item[0].lines)),
-                item[0].top,
-                item[0].left,
-            ),
-        )
-        for region, text in regions:
-            if not text.strip():
-                continue
-            text = preserve_case(region.text, text)
-            bold = estimate_bold(source_image, region)
-            plan = fit_region(region, text, make_font)
-            boxes = [
-                (row.source.left, row.source.top, row.source.right, row.source.bottom)
-                for row in plan
-            ]
-            if any(
-                x1 < region.left
-                or x2 > region.right
-                or y1 < region.top
-                or y2 > region.bottom
-                for x1, y1, x2, y2 in boxes
-            ):
-                LOGGER.warning(
-                    "Оверлей отклонил строки за границами своей области (%s, %s)",
-                    region.left,
-                    region.top,
-                )
-                continue
-            if not plan or any(
-                x1 < 0 or y1 < 0 or x2 > width or y2 > height
-                for x1, y1, x2, y2 in boxes
-            ):
-                LOGGER.warning(
-                    "Оверлей пропустил область (%s, %s): перевод не помещается",
-                    region.left,
-                    region.top,
-                )
-                continue
-            if any(
-                self._overlap_ratio(box, used) > 0 for box in boxes for used in occupied
-            ):
-                LOGGER.warning(
-                    "Оверлей пропустил пересекающуюся область (%s, %s)",
-                    region.left,
-                    region.top,
-                )
-                continue
-            # Prepare and validate the whole block before changing any source
-            # pixels. Rendering errors must never leave a background-only box.
-            region_layers = {}
-            region_styles = {}
-            try:
-                for row, box in zip(plan, boxes):
-                    style = backgrounds.get(box) if backgrounds is not None else None
-                    if style is None and source_image is not None:
-                        style = prepare_background(source_image, box)
-                    color = strengthen_color(style.text_color, style.color) if style else self.TEXT_COLOR
-                    region_layers[id(row)] = render_row(row, color)
-                    region_styles[id(row)] = style
-            except (ValueError, OSError) as error:
-                LOGGER.warning('Оверлей сохранил исходный блок (%s, %s): %s',region.left,region.top,error)
-                continue
-            prepared_layers.update(region_layers)
-            prepared_styles.update(region_styles)
-            accepted.extend(plan)
-            occupied.extend(boxes)
-        for row in accepted:
-            line = row.source
-            box = (line.left, line.top, line.right, line.bottom)
-            style = prepared_styles[id(row)]
-            if style is not None and style.patch is not None:
-                photo = ImageTk.PhotoImage(style.patch, master=self.window)
-                self._images.append(photo)
-                self.canvas.create_image(line.left, line.top, anchor="nw", image=photo)
-            else:
-                color = style.color if style else self.BOX_COLOR
-                self.canvas.create_rectangle(*box, fill=color, outline=color, width=0)
-        for row in accepted:
-            photo = ImageTk.PhotoImage(prepared_layers[id(row)], master=self.window)
-            self._images.append(photo)
-            self.canvas.create_image(row.source.left, row.source.top, anchor='nw', image=photo)
-        if not accepted:
-            return
-        if not self._enable_click_through() or not self._set_native_window_bounds(
-            left, top, width, height
-        ):
-            raise RuntimeError("Не удалось настроить окно оверлея Windows")
+        if prepared is None:
+            prepared = prepare_overlay(translated_regions, (width, height), source_image,
+                                       backgrounds=backgrounds)
+        if prepared.image is None:
+            return prepared.stats
+        if self._screen_bounds != screen_bounds:
+            self.window.geometry(f"{width}x{height}+0+0")
+            self.window.update_idletasks()
+            if not self._native_ready:
+                if not self._enable_click_through():
+                    raise RuntimeError("Не удалось настроить окно оверлея Windows")
+                self._native_ready = True
+                self.capture_excluded = self._exclude_from_capture()
+            if not self._set_native_window_bounds(left, top, width, height):
+                raise RuntimeError("Не удалось задать положение оверлея Windows")
+            self._screen_bounds = screen_bounds
+        if self._prepared is not prepared:
+            self.canvas.delete('all')
+            photo = ImageTk.PhotoImage(prepared.image, master=self.window)
+            self._images = [photo]
+            self.canvas.create_image(prepared.left, prepared.top, anchor='nw', image=photo)
+            self._prepared = prepared
         self.window.deiconify()
-        self.window.attributes("-topmost", True)
+        self.visible = True
         self.window.update_idletasks()
-        LOGGER.info("Оверлей показал %d строк в исходных рамках", len(accepted))
+        LOGGER.info("Оверлей показал %d блоков, %d строк; пропущено %d: %s",
+                    prepared.stats.regions, prepared.stats.rows, prepared.stats.skipped,
+                    ', '.join(prepared.skipped_reasons) or 'нет')
+        return prepared.stats
 
-    @staticmethod
-    def _overlap_ratio(
-        first: tuple[int, int, int, int], second: tuple[int, int, int, int]
-    ) -> float:
-        """Intersection area as a fraction of the smaller source-line area."""
-        left = max(first[0], second[0])
-        top = max(first[1], second[1])
-        right = min(first[2], second[2])
-        bottom = min(first[3], second[3])
-        intersection = max(0, right - left) * max(0, bottom - top)
-        if not intersection:
-            return 0.0
-        area_first = max(1, first[2] - first[0]) * max(1, first[3] - first[1])
-        area_second = max(1, second[2] - second[0]) * max(1, second[3] - second[1])
-        return intersection / min(area_first, area_second)
+    def _exclude_from_capture(self) -> bool:
+        if os.name != 'nt':
+            return False
+        try:
+            function = ctypes.windll.user32.SetWindowDisplayAffinity
+            function.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            function.restype = ctypes.c_bool
+            return bool(function(ctypes.c_void_p(self._native_hwnd()), 0x11))
+        except (AttributeError, OSError):
+            return False
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self.visible = False
         self._images = []
+        self._prepared = None
         try:
             self.window.destroy()
         except tk.TclError:

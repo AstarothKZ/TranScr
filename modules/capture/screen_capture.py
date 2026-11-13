@@ -18,7 +18,6 @@ class ScreenCapturer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.virtual_bounds = self.get_virtual_screen_bounds()
-        self.last_bounds: ScreenBounds = self.virtual_bounds
         self._sct = None
         self._sct_lock = threading.Lock()
 
@@ -57,13 +56,6 @@ class ScreenCapturer:
             sct = self._sct
 
         screenshot = sct.grab(monitor)
-        actual_bounds = (
-            left,
-            top,
-            int(screenshot.width),
-            int(screenshot.height),
-        )
-        self.last_bounds = actual_bounds
         # The NumPy view keeps the screenshot's byte buffer alive and avoids a
         # second full-frame copy. OCR engines in this project only read pixels.
         rgb = screenshot.rgb

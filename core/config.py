@@ -15,7 +15,7 @@ class AppConfig:
 
     DEFAULTS = {
         "ocr": "windows",
-        "provider": "mymemory",
+        "provider": "google",
         "hybrid_enabled": False,
         "fallback_provider": "argos",
         "start_hotkey": "alt+t",
@@ -24,6 +24,7 @@ class AppConfig:
         "dismiss_hotkey": "esc",
         "area": None,
         "save_debug_screenshots": False,
+        "repair_incomplete": False,
     }
 
     def __init__(self, project_root: Path) -> None:
@@ -44,7 +45,7 @@ class AppConfig:
                 # Migrate the old single "hybrid" provider choice to a primary
                 # provider plus an independently configurable fallback.
                 if loaded.get("provider") == "hybrid":
-                    result["provider"] = "mymemory"
+                    result["provider"] = "google"
                     result["hybrid_enabled"] = True
                     result["fallback_provider"] = "argos"
         except (OSError, ValueError, TypeError):
@@ -64,10 +65,12 @@ class AppConfig:
             not isinstance(result["fallback_provider"], str)
             or result["fallback_provider"] not in PROVIDERS
         ):
-            result["fallback_provider"] = self.DEFAULTS["fallback_provider"]
+            result["fallback_provider"] = (
+                "google" if result["provider"] != "google" else "argos"
+            )
         if result["fallback_provider"] == result["provider"]:
             result["fallback_provider"] = (
-                "argos" if result["provider"] != "argos" else "mymemory"
+                "argos" if result["provider"] != "argos" else "google"
             )
         if not isinstance(result["hybrid_enabled"], bool):
             result["hybrid_enabled"] = False
@@ -87,6 +90,8 @@ class AppConfig:
                 result[key] = value.strip().lower()
         if not isinstance(result["save_debug_screenshots"], bool):
             result["save_debug_screenshots"] = False
+        if not isinstance(result["repair_incomplete"], bool):
+            result["repair_incomplete"] = False
         if not self._valid_area(result["area"]):
             result["area"] = None
         return result

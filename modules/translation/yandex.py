@@ -1,10 +1,19 @@
 """Yandex Cloud Translate provider."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from .text_chunks import split_text
+from .batching import (
+    RequestBudget,
+    batch_results,
+    make_client,
+    map_bounded,
+    pack_parts,
+    text_parts,
+    ServiceCooldown,
+)
 
 
 class YandexTranslateProvider:
@@ -17,39 +26,49 @@ class YandexTranslateProvider:
         self.from_code = from_code
         self.to_code = to_code
         self.timeout = timeout
-        self._client = httpx.Client(timeout=timeout)
+        self._cooldown = ServiceCooldown("Yandex")
+        self._client = make_client(timeout)
+        self._executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="transcr-yandex"
+        )
 
     def translate(self, text: str) -> str:
-        return self.translate_many([text])[0]
+        result = self.translate_many([text])[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
-    def translate_many(self, texts: list[str]) -> list[str]:
+    def translate_many(
+        self, texts: list[str], *, cancel=None, deadline=None
+    ) -> list[str | Exception]:
         """Batch independent regions without merging their text or coordinates."""
-        parts = [
-            (index, chunk)
-            for index, text in enumerate(texts)
-            for chunk in split_text(text, self.MAX_CHARS)
-        ]
-        results: list[list[str]] = [[] for _ in texts]
-        batch: list[tuple[int, str]] = []
-        size = 0
+        budget = RequestBudget(cancel, deadline)
+        parts = text_parts(texts, self.MAX_CHARS)
+        batches = pack_parts(parts, self.MAX_CHARS)
 
-        def flush() -> None:
-            if batch:
-                translated = self._request([part for _, part in batch])
-                for (index, _), result in zip(batch, translated):
-                    results[index].append(result)
+        def request_batch(batch):
+            budget.check()
+            self._cooldown.check()
+            try:
+                return self._request([part.text for part in batch], budget)
+            except Exception as error:
+                self._cooldown.record(error)
+                raise
 
-        for item in parts:
-            if size + len(item[1]) > self.MAX_CHARS:
-                flush()
-                batch = []
-                size = 0
-            batch.append(item)
-            size += len(item[1])
-        flush()
-        return ["\n".join(result) for result in results]
+        values = map_bounded(
+            self._executor,
+            request_batch,
+            batches,
+            budget,
+            2,
+        )
+        return batch_results(texts, parts, batches, values)
 
-    def _request(self, texts: list[str]) -> list[str]:
+    def _request(
+        self, texts: list[str], budget: RequestBudget | None = None
+    ) -> list[str | Exception]:
+        budget = budget or RequestBudget()
+        budget.check()
         api_key = os.getenv("YANDEX_API_KEY", "").strip()
         folder_id = os.getenv("YC_FOLDER_ID", "").strip()
         if not api_key or not folder_id:
@@ -66,10 +85,14 @@ class YandexTranslateProvider:
         }
         try:
             response = self._client.post(
-                self.API_URL, json=body, headers={"Authorization": f"Api-Key {api_key}"}
+                self.API_URL,
+                json=body,
+                headers={"Authorization": f"Api-Key {api_key}"},
+                timeout=budget.timeout(self.timeout),
             )
             response.raise_for_status()
             payload = response.json()
+            budget.check()
         except httpx.HTTPStatusError as error:
             raise RuntimeError(
                 f"Yandex Cloud вернул HTTP {error.response.status_code}"
@@ -83,14 +106,15 @@ class YandexTranslateProvider:
         )
         if not isinstance(translations, list) or len(translations) != len(texts):
             raise RuntimeError("Yandex Cloud вернул неверное количество переводов.")
-        if any(
-            not isinstance(item, dict)
-            or not isinstance(item.get("text"), str)
-            or not item["text"].strip()
+        return [
+            item["text"].strip()
+            if isinstance(item, dict)
+            and isinstance(item.get("text"), str)
+            and item["text"].strip()
+            else ValueError("Yandex Cloud вернул пустой или некорректный перевод")
             for item in translations
-        ):
-            raise RuntimeError("Yandex Cloud вернул пустой или некорректный перевод.")
-        return [item["text"] for item in translations]
+        ]
 
     def close(self) -> None:
+        self._executor.shutdown(wait=True, cancel_futures=True)
         self._client.close()

@@ -8,5 +8,6 @@ def __getattr__(name):
     # Tk dialogs or .env files. Keep the public import backwards compatible.
     if name == "Translator":
         from .translator import Translator
+
         return Translator
     raise AttributeError(name)

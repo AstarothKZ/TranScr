@@ -1,7 +1,22 @@
 """Conservative casing and initial visual font-weight estimation."""
 import re
+from functools import lru_cache
 import numpy as np
+from PIL import Image, ImageDraw
 from modules.overlay.fonts import load_font
+
+
+@lru_cache(maxsize=2048)
+def glyph_density(text, size, bold):
+    """Count glyph coverage in Pillow's C histogram, avoiding Python pixel copies."""
+    font = load_font(size, bold)
+    left, top, right, bottom = font.getbbox(text, anchor='la')
+    width, height = right-left, bottom-top
+    if width <= 0 or height <= 0:
+        return 0.0
+    image = Image.new('L', (width, height))
+    ImageDraw.Draw(image).text((-left, -top), text, font=font, fill=255, anchor='la')
+    return sum(image.histogram()[101:])/(width*height)
 
 
 def strengthen_color(text_color, background_color):
@@ -53,9 +68,7 @@ def estimate_bold(image, region):
         density = mask[yy.min():yy.max()+1, xx.min():xx.max()+1].mean()
         refs = []
         for bold in (False, True):
-            font = load_font(max(8, line.bottom-line.top), bold)
-            glyphs = np.array(font.getmask(line.text), dtype=np.uint8)
-            refs.append(float((glyphs > 100).mean()) if glyphs.size else 0)
+            refs.append(glyph_density(line.text, max(8, line.bottom-line.top), bold))
         if refs[1] > refs[0]:
             votes.append(density > refs[0] + (refs[1]-refs[0])*.65)
     return bool(votes) and sum(votes) > len(votes)/2

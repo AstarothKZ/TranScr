@@ -1,348 +1,336 @@
-"""Translation manager: provider selection, hybrid fallback and memory cache."""
+"""Batch-first translation facade with a frame budget, fallback and bounded cache."""
 
-import logging
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+import logging
 from pathlib import Path
+import re
 from threading import Event, RLock
+from time import perf_counter
 
-import httpx
+from dotenv import load_dotenv
 
 from modules.text_processing.filters import untranslated_fragments
-
 from .argos import ArgosTranslateProvider
+from .batching import RequestBudget, TranslationCancelled
 from .catalog import PROVIDER_LABELS
-from .google import GoogleTranslateError, GoogleTranslateProvider
-from .mymemory import MyMemoryTranslateProvider
+from .google import GoogleTranslateProvider
 from .yandex import YandexTranslateProvider
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # .env is optional; environment variables are also supported.
-    load_dotenv = None
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+LOGGER = logging.getLogger("transcr.pipeline")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if load_dotenv is not None:
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+def normalize_text(text: str) -> str:
+    # Line geometry belongs to TextRegion. A translation request represents a
+    # logical paragraph, not the OCR's arbitrary visual line breaks.
+    text = re.sub("\u00ad\\s*\\n\\s*", "", text)
+    return " ".join(text.split())
+
+
+@dataclass
+class TranslationStats:
+    unique_texts: int = 0
+    cache_hits: int = 0
+    requests: int = 0
+    incomplete: int = 0
+    expires_at: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CacheEntry:
+    text: str
+    expires_at: float | None = None
 
 
 class Translator:
-    """Stable facade; primary and fallback providers can be chosen independently."""
-
     PROVIDERS = PROVIDER_LABELS
-    CACHE_SIZE = 128
+    CACHE_SIZE = 2048
+    CACHE_CHARS = 1_000_000
+    PARTIAL_CACHE_TTL = 30.0
 
     def __init__(
         self,
-        from_code: str = "en",
-        to_code: str = "ru",
+        from_code="en",
+        to_code="ru",
         root=None,
-        provider: str = "mymemory",
-        timeout: float = 15.0,
-        hybrid_enabled: bool = False,
-        fallback_provider: str = "argos",
-    ) -> None:
-        # Accept the previous API's provider="hybrid" for config scripts/tests.
-        if provider == "hybrid":
-            provider = "mymemory"
-            hybrid_enabled = True
-            fallback_provider = "argos"
-        if provider not in self.PROVIDERS:
-            raise ValueError(f"Неизвестный переводчик: {provider}")
-        if fallback_provider not in self.PROVIDERS:
-            raise ValueError(f"Неизвестный резервный переводчик: {fallback_provider}")
+        provider="google",
+        timeout=15.0,
+        hybrid_enabled=False,
+        fallback_provider="argos",
+        repair_incomplete=False,
+    ):
+        if timeout <= 0:
+            raise ValueError("Время перевода должно быть положительным")
+        self._validate(provider, fallback_provider)
         if provider == fallback_provider:
-            fallback_provider = "argos" if provider != "argos" else "mymemory"
-
-        self.from_code = from_code
-        self.to_code = to_code
-        self.root = root
-        self.provider = provider
-        self.timeout = timeout
-        self.hybrid_enabled = bool(hybrid_enabled)
-        self.fallback_provider = fallback_provider
-        self._cache: OrderedDict[tuple[str, str, str, str, bool, str], str] = (
-            OrderedDict()
+            fallback_provider = "argos" if provider != "argos" else "google"
+        self.from_code, self.to_code, self.root = from_code, to_code, root
+        self.provider, self.timeout = provider, timeout
+        self.hybrid_enabled, self.fallback_provider = (
+            bool(hybrid_enabled),
+            fallback_provider,
         )
-        self._cache_lock = RLock()
-        self._provider_lock = RLock()
-        self._argos_translation_lock = RLock()
-        self._mymemory_provider = None
-        self._google_provider = None
-        self._yandex_provider = None
-        self._argos_provider = None
-        self._executor = ThreadPoolExecutor(
-            max_workers=3, thread_name_prefix="transcr-translate"
-        )
+        self.repair_incomplete = bool(repair_incomplete)
+        self._cache = OrderedDict()
+        self._cache_chars = 0
+        self._cache_lock, self._provider_lock = RLock(), RLock()
+        self._google_provider = self._yandex_provider = self._argos_provider = None
+        self.last_stats = TranslationStats()
+        self._closed = False
 
-    def translate_many(
-        self, texts: list[str], cancel: Event | None = None
-    ) -> dict[str, str | Exception]:
-        """Translate a frame with one scheduling layer and per-region failures.
+    @classmethod
+    def _validate(cls, selected, fallback):
+        for value in (selected, fallback):
+            if value not in cls.PROVIDERS:
+                raise ValueError(f"Неизвестный переводчик: {value}")
 
-        A failed transport disables further primary requests for this frame only;
-        the next capture can retry. Already running requests finish normally.
-        """
-        texts = list(dict.fromkeys(text.strip() for text in texts if text.strip()))
-        results: dict[str, str | Exception] = {}
-        missing = []
-        for text in texts:
-            key = self._cache_key(text)
-            with self._cache_lock:
-                if key in self._cache:
-                    results[text] = self._cache[key]
-                    self._cache.move_to_end(key)
-                else:
-                    missing.append(text)
-        if not missing or (cancel is not None and cancel.is_set()):
-            return results
-
-        transport_failed = Event()
-
-        def fallback_one(text: str, primary_error: Exception) -> str | Exception:
-            if not self.hybrid_enabled:
-                return primary_error
-            if cancel is not None and cancel.is_set():
-                return RuntimeError("Перевод отменён")
-            try:
-                return self.translate_text(
-                    text, provider=self.fallback_provider, hybrid_enabled=False
-                )
-            except Exception as fallback_error:
-                return RuntimeError(
-                    f"Основной переводчик: {primary_error}; резервный: {fallback_error}"
-                )
-
-        def translate_one(text: str) -> str | Exception:
-            if cancel is not None and cancel.is_set():
-                return RuntimeError("Перевод отменён")
-            if transport_failed.is_set():
-                return fallback_one(
-                    text, RuntimeError("Сервис недоступен; запрос этого кадра пропущен")
-                )
-            try:
-                value = self.translate_text(text, hybrid_enabled=False)
-                self._remember(self._cache_key(text), value)
-                return value
-            except Exception as error:
-                cause = error
-                while cause is not None:
-                    if isinstance(cause, (httpx.TransportError, GoogleTranslateError)) or (
-                        isinstance(cause, httpx.HTTPStatusError)
-                        and (
-                            cause.response.status_code in {401, 403, 429}
-                            or cause.response.status_code >= 500
-                        )
-                    ):
-                        transport_failed.set()
-                        break
-                    cause = cause.__cause__
-                return fallback_one(text, error)
-
-        if self.provider == "yandex":
-            try:
-                translated = self._yandex().translate_many(missing)
-                for text, value in zip(missing, translated):
-                    try:
-                        value = self._complete_translation(value, self.provider, text)
-                        results[text] = value
-                        self._remember(self._cache_key(text), value)
-                    except Exception as error:
-                        results[text] = fallback_one(text, error)
-                return results
-            except Exception as error:
-                if not self.hybrid_enabled:
-                    results.update((text, error) for text in missing)
-                    return results
-                # Do not repeat the failed batch as individual primary requests.
-                transport_failed.set()
-
-        if self.provider == "argos":
-            for text in missing:
-                results[text] = translate_one(text)
-        else:
-            futures = {
-                text: self._executor.submit(translate_one, text) for text in missing
-            }
-            results.update((text, future.result()) for text, future in futures.items())
-        return results
-
-    def _cache_key(self, text: str):
+    def _cache_key(self, text, selected=None, hybrid=None, fallback=None):
         return (
-            self.provider,
+            selected or self.provider,
             self.from_code,
             self.to_code,
             text,
-            self.hybrid_enabled,
-            self.fallback_provider,
+            self.hybrid_enabled if hybrid is None else hybrid,
+            fallback or self.fallback_provider,
+            self.repair_incomplete,
         )
 
-    def _remember(self, key, translated: str) -> None:
-        if untranslated_fragments(translated):
-            return
+    def _remember(self, key, value):
+        if not value.strip() or self._closed:
+            return None
+        expires_at = (
+            perf_counter() + self.PARTIAL_CACHE_TTL
+            if untranslated_fragments(value)
+            else None
+        )
+        entry = CacheEntry(value, expires_at)
         with self._cache_lock:
-            self._cache[key] = translated
-            self._cache.move_to_end(key)
-            while len(self._cache) > self.CACHE_SIZE:
-                self._cache.popitem(last=False)
+            if self._closed:
+                return None
+            previous = self._cache.pop(key, None)
+            if previous is not None:
+                self._cache_chars -= len(key[3]) + len(previous.text)
+            self._cache[key] = entry
+            self._cache_chars += len(key[3]) + len(value)
+            while (
+                len(self._cache) > self.CACHE_SIZE
+                or self._cache_chars > self.CACHE_CHARS
+            ):
+                old_key, old = self._cache.popitem(last=False)
+                self._cache_chars -= len(old_key[3]) + len(old.text)
+        return expires_at
 
-    def translate_text(
+    def translate_many(
         self,
-        text: str,
-        provider: str | None = None,
+        texts,
+        cancel: Event | None = None,
         *,
-        hybrid_enabled: bool | None = None,
-        fallback_provider: str | None = None,
-    ) -> str:
-        """Translate text; the optional fallback is used only after an error."""
-        text = text.strip()
-        if not text:
-            return ""
-
+        provider=None,
+        hybrid_enabled=None,
+        fallback_provider=None,
+    ):
+        if self._closed:
+            raise RuntimeError("Переводчик уже закрыт")
         selected = provider or self.provider
         use_hybrid = (
             self.hybrid_enabled if hybrid_enabled is None else bool(hybrid_enabled)
         )
         fallback = fallback_provider or self.fallback_provider
-        if selected == "hybrid":  # Backwards-compatible call style.
-            selected, use_hybrid, fallback = self.provider, True, self.fallback_provider
-        if selected not in self.PROVIDERS:
-            raise ValueError(f"Неизвестный переводчик: {selected}")
-        if fallback not in self.PROVIDERS:
-            raise ValueError(f"Неизвестный резервный переводчик: {fallback}")
-        if selected == fallback:
-            use_hybrid = False
+        self._validate(selected, fallback)
+        use_hybrid = use_hybrid and selected != fallback
+        budget = RequestBudget(cancel, perf_counter() + self.timeout)
+        originals = list(dict.fromkeys(text.strip() for text in texts if text.strip()))
+        normalized = {source: normalize_text(source) for source in originals}
+        unique = list(dict.fromkeys(normalized.values()))
+        stats = TranslationStats(unique_texts=len(unique))
+        values, missing = {}, []
+        for text in unique:
+            key = self._cache_key(text, selected, use_hybrid, fallback)
+            with self._cache_lock:
+                if key in self._cache:
+                    entry = self._cache[key]
+                    if entry.expires_at is None or perf_counter() < entry.expires_at:
+                        values[text] = entry.text
+                        self._cache.move_to_end(key)
+                        stats.cache_hits += 1
+                        if entry.expires_at is not None:
+                            stats.expires_at = min(
+                                stats.expires_at or entry.expires_at, entry.expires_at
+                            )
+                            stats.incomplete += 1
+                        continue
+                    self._cache.pop(key)
+                    self._cache_chars -= len(key[3]) + len(entry.text)
+                missing.append(text)
+        requests_before = self._request_count()
+        if missing:
+            primary = self._provider_many(selected, missing, budget)
+            values.update(zip(missing, primary))
+            failed = [
+                text
+                for text in missing
+                if isinstance(values[text], Exception)
+                and not isinstance(values[text], (TranslationCancelled, TimeoutError))
+            ]
+            if use_hybrid and failed:
+                reserve = self._provider_many(fallback, failed, budget)
+                for text, result in zip(failed, reserve):
+                    if isinstance(result, Exception):
+                        values[text] = RuntimeError(
+                            f"Основной переводчик: {values[text]}; резервный: {result}"
+                        )
+                    else:
+                        values[text] = result
+            if (
+                self.repair_incomplete
+                and self.from_code == "en"
+                and self.to_code == "ru"
+            ):
+                self._repair(values, missing, selected, fallback, use_hybrid, budget)
+            for text in missing:
+                value = values[text]
+                if isinstance(value, str):
+                    if untranslated_fragments(value):
+                        stats.incomplete += 1
+                    expires_at = self._remember(
+                        self._cache_key(text, selected, use_hybrid, fallback), value
+                    )
+                    if expires_at is not None:
+                        stats.expires_at = min(
+                            stats.expires_at or expires_at, expires_at
+                        )
+        stats.requests = self._request_count() - requests_before
+        self.last_stats = stats
+        LOGGER.info(
+            "Перевод: HTTP %d; кэш %d/%d; неполных %d",
+            stats.requests,
+            stats.cache_hits,
+            stats.unique_texts,
+            stats.incomplete,
+        )
+        return {source: values[normalized[source]] for source in originals}
 
-        key = (selected, self.from_code, self.to_code, text, use_hybrid, fallback)
-        with self._cache_lock:
-            if key in self._cache:
-                self._cache.move_to_end(key)
-                return self._cache[key]
-
-        translated = self._translate(text, selected, use_hybrid, fallback)
-        self._remember(key, translated)
-        return translated
-
-    def _translate(
-        self, text: str, selected: str, hybrid_enabled: bool, fallback: str
-    ) -> str:
-        if not hybrid_enabled:
-            return self._translate_with_provider(text, selected)
-
-        primary_error: Exception | None = None
+    def _provider_many(self, selected, texts, budget):
         try:
-            return self._translate_with_provider(text, selected)
+            budget.check()
+            provider = self._get_provider(selected)
+            values = provider.translate_many(
+                texts, cancel=budget.cancel, deadline=budget.deadline
+            )
+            if not isinstance(values, list) or len(values) != len(texts):
+                raise ValueError("Переводчик вернул неверное количество результатов")
+            return [
+                value
+                if isinstance(value, Exception)
+                or (isinstance(value, str) and value.strip())
+                else ValueError("Переводчик вернул пустой результат")
+                for value in values
+            ]
         except Exception as error:
-            primary_error = error
+            return [error] * len(texts)
 
-        try:
-            return self._translate_with_provider(text, fallback)
-        except Exception as fallback_error:
-            raise RuntimeError(
-                f"Основной переводчик {selected} не сработал: {primary_error}. "
-                f"Резервный переводчик {fallback} также не сработал: {fallback_error}"
-            ) from fallback_error
+    def _repair(self, values, texts, selected, fallback, use_hybrid, budget):
+        # One additional batch, not up to three serial requests for every region.
+        # Keep a separate short budget for this optional quality pass.
+        repair_budget = RequestBudget(
+            budget.cancel, min(budget.deadline, perf_counter() + 2)
+        )
+        candidates = []
+        for text in texts:
+            if not isinstance(values[text], str):
+                continue
+            for start, end in untranslated_fragments(values[text])[:2]:
+                candidates.append((text, start, end, values[text][start:end]))
+        if not candidates:
+            return
+        fragments = list(dict.fromkeys(item[3] for item in candidates))
+        translated = dict(
+            zip(
+                fragments,
+                self._provider_many(
+                    fallback if use_hybrid else selected, fragments, repair_budget
+                ),
+            )
+        )
+        for text, start, end, fragment in reversed(candidates):
+            replacement = translated[fragment]
+            if isinstance(replacement, str) and re.search("[А-Яа-яЁё]", replacement):
+                values[text] = (
+                    values[text][:start] + replacement.strip() + values[text][end:]
+                )
 
-    def _translate_with_provider(self, text: str, selected: str) -> str:
-        return self._complete_translation(
-            self._provider_translate(text, selected), selected, text
+    def translate_text(
+        self, text, provider=None, *, hybrid_enabled=None, fallback_provider=None
+    ):
+        source = text.strip()
+        if not source:
+            return ""
+        value = self.translate_many(
+            [source],
+            provider=provider,
+            hybrid_enabled=hybrid_enabled,
+            fallback_provider=fallback_provider,
+        )[source]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def _get_provider(self, selected):
+        constructors = {
+            "google": GoogleTranslateProvider,
+            "yandex": YandexTranslateProvider,
+            "argos": ArgosTranslateProvider,
+        }
+        field = f"_{selected}_provider"
+        with self._provider_lock:
+            if self._closed:
+                raise RuntimeError("Переводчик уже закрыт")
+            instance = getattr(self, field)
+            if instance is None:
+                if selected == "argos":
+                    instance = constructors[selected](
+                        self.from_code, self.to_code, self.root
+                    )
+                else:
+                    instance = constructors[selected](
+                        self.from_code, self.to_code, self.timeout
+                    )
+                setattr(self, field, instance)
+            return instance
+
+    def _request_count(self):
+        return sum(
+            getattr(
+                getattr(getattr(self, f"_{name}_provider"), "_client", None),
+                "transcr_requests",
+                0,
+            )
+            for name in self.PROVIDERS
         )
 
-    def _complete_translation(self, result: str, selected: str, source: str) -> str:
-        if self.from_code != "en" or self.to_code != "ru":
-            return result
-        fragments = untranslated_fragments(result)
-        for start, end in reversed(fragments[:2]):
-            try:
-                replacement = self._provider_translate(
-                    result[start:end], selected
-                ).strip()
-            except Exception:
-                continue
-            if replacement and any(
-                "а" <= char.lower() <= "я" or char.lower() == "ё"
-                for char in replacement
-            ):
-                result = result[:start] + replacement + result[end:]
-        if untranslated_fragments(result):
-            if self.hybrid_enabled and selected != self.fallback_provider:
+    def check_language(self):
+        return self._get_provider("argos").check_language()
+
+    def warmup(self):
+        if self.provider == "argos":
+            self._get_provider("argos").warmup()
+
+    def manual_model_installation(self):
+        return self._get_provider("argos").manual_model_installation()
+
+    def close(self):
+        with self._provider_lock:
+            if self._closed:
+                return
+            self._closed = True
+        for name in self.PROVIDERS:
+            instance = getattr(self, f"_{name}_provider")
+            if instance is not None:
                 try:
-                    fallback = self._provider_translate(source, self.fallback_provider)
-                    if fallback.strip() and not untranslated_fragments(fallback):
-                        return fallback
+                    instance.close()
                 except Exception:
-                    pass
-            logging.getLogger("transcr.pipeline").warning(
-                "Показан неполный перевод; проверьте распознавание исходника: %r",
-                result,
-            )
-        return result
-
-    def _provider_translate(self, text: str, selected: str) -> str:
-        if selected == "google":
-            return self._google().translate(text)
-        if selected == "mymemory":
-            return self._mymemory().translate(text)
-        if selected == "yandex":
-            return self._yandex().translate(text)
-        if selected == "argos":
-            # Keep a single in-process Argos operation at a time while allowing
-            # online primary requests to run concurrently in hybrid mode.
-            with self._argos_translation_lock:
-                return self._argos().translate(text)
-        raise ValueError(f"Неизвестный переводчик: {selected}")
-
-    def _google(self) -> GoogleTranslateProvider:
-        with self._provider_lock:
-            if self._google_provider is None:
-                self._google_provider = GoogleTranslateProvider(
-                    self.from_code, self.to_code, self.timeout
-                )
-            return self._google_provider
-
-    def _mymemory(self) -> MyMemoryTranslateProvider:
-        with self._provider_lock:
-            if self._mymemory_provider is None:
-                self._mymemory_provider = MyMemoryTranslateProvider(
-                    self.from_code, self.to_code, self.timeout
-                )
-            return self._mymemory_provider
-
-    def _yandex(self) -> YandexTranslateProvider:
-        with self._provider_lock:
-            if self._yandex_provider is None:
-                self._yandex_provider = YandexTranslateProvider(
-                    self.from_code, self.to_code, self.timeout
-                )
-            return self._yandex_provider
-
-    def _argos(self) -> ArgosTranslateProvider:
-        with self._provider_lock:
-            if self._argos_provider is None:
-                self._argos_provider = ArgosTranslateProvider(
-                    self.from_code, self.to_code, self.root
-                )
-            return self._argos_provider
-
-    def close(self) -> None:
-        """Close resources opened by translation providers."""
-        self._executor.shutdown(wait=True, cancel_futures=True)
-        for provider in (
-            self._google_provider,
-            self._mymemory_provider,
-            self._yandex_provider,
-            self._argos_provider,
-        ):
-            if provider is not None:
-                try:
-                    provider.close()
-                except Exception:
-                    pass
-
-    def check_language(self) -> bool:
-        """Return True when the Argos model for the selected language pair is installed."""
-        return self._argos().check_language()
-
-    def manual_model_installation(self) -> bool:
-        """Offer the user to install an Argos model from a local .argosmodel file."""
-        return self._argos().manual_model_installation()
+                    LOGGER.exception("Не удалось закрыть переводчик %s", name)
+        with self._cache_lock:
+            self._cache.clear()
+            self._cache_chars = 0

@@ -22,17 +22,12 @@ class TextRegion:
     top: int
     right: int
     bottom: int
-    font_size: int
     lines: tuple[OCRText, ...] = ()
     alignment_hint: str | None = None
 
     @property
     def width(self) -> int:
         return max(1, self.right - self.left)
-
-    @property
-    def height(self) -> int:
-        return max(1, self.bottom - self.top)
 
     @property
     def looks_justified(self) -> bool:
@@ -320,7 +315,6 @@ def group_ocr_texts(items: list[OCRText], *, context: list[OCRText] = ()) -> lis
     regions: list[TextRegion] = []
     for component in flows:
         lines = tuple(sorted(component, key=lambda item: (item.top, item.left)))
-        heights = [max(1, item.bottom - item.top) for item in lines]
         regions.append(
             TextRegion(
                 text="\n".join(item.text.strip() for item in lines),
@@ -328,19 +322,18 @@ def group_ocr_texts(items: list[OCRText], *, context: list[OCRText] = ()) -> lis
                 top=min(item.top for item in lines),
                 right=max(item.right for item in lines),
                 bottom=max(item.bottom for item in lines),
-                font_size=max(5, min(28, round(median(heights) * 0.78))),
                 lines=lines,
             )
         )
     anchors = [region for region in regions if len(region.lines) >= 5
                and region.looks_justified
-               and region.width >= median(l.bottom-l.top for l in region.lines)*12]
+               and region.width >= median(line.bottom-line.top for line in region.lines)*12]
     for i, region in enumerate(regions):
         if region.alignment == 'justify' or not region.lines:
             continue
-        height = median(l.bottom-l.top for l in region.lines)
+        height = median(line.bottom-line.top for line in region.lines)
         for anchor in anchors:
-            anchor_height = median(l.bottom-l.top for l in anchor.lines)
+            anchor_height = median(line.bottom-line.top for line in anchor.lines)
             gap = max(0, region.top-anchor.bottom, anchor.top-region.bottom)
             if (max(height,anchor_height)/min(height,anchor_height) <= 1.6
                     and gap <= height*3

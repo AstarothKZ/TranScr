@@ -94,7 +94,7 @@ class Application:
         )
         self._frame_cache = FrameCache()
         self._runtime: RuntimeBundle | None = None
-        self._runtime_settings: tuple[str, str, bool, str] | None = None
+        self._runtime_settings: tuple[str, str, bool, str, bool] | None = None
         self._starting = False
         self._active = False
         self._busy = False
@@ -105,9 +105,10 @@ class Application:
         self._runtime_publish_lock = threading.Lock()
         self._capture_cancel = threading.Event()
         self._keyboard_hook = None
-        self._quick_area_hotkey_text = "alt+q"
         self._capture_hotkey_text = self.HOTKEY
         self._area_selector: AreaSelector | None = None
+        self._capture_after_id = None
+        self._poll_after_id = None
 
         self._ui_log_queue: Queue = Queue()
         self._ui_log_handler: QueueLogHandler | None = None
@@ -117,7 +118,7 @@ class Application:
         self._setup_logger()
         self._build_ui()
         self._append_log("Приложение запущено. Настройки загружены.")
-        self.root.after(20, self._poll_events)
+        self._poll_after_id = self.root.after(20, self._poll_events)
 
     def _setup_logger(self) -> None:
         """Log to a new session file and forward messages to the in-app journal."""
@@ -204,6 +205,7 @@ class Application:
         self.provider_var = self.ui.provider_var
         self.fallback_provider_var = self.ui.fallback_provider_var
         self.hybrid_var = self.ui.hybrid_var
+        self.repair_var = self.ui.repair_var
         self.start_hotkey_var = self.ui.start_hotkey_var
         self.quick_area_hotkey_var = self.ui.quick_area_hotkey_var
         self.dismiss_mode_var = self.ui.dismiss_mode_var
@@ -211,10 +213,6 @@ class Application:
         self.area_var = self.ui.area_var
         self.save_debug_var = self.ui.save_debug_var
         self.status_var = self.ui.status_var
-        self.ocr_combo = self.ui.ocr_combo
-        self.provider_combo = self.ui.provider_combo
-        self.fallback_combo = self.ui.fallback_combo
-        self.hybrid_button = self.ui.hybrid_button
         self.select_area_button = self.ui.select_area_button
         self.start_button = self.ui.start_button
         self.capture_button = self.ui.capture_button
@@ -261,12 +259,12 @@ class Application:
     def _save_settings(self) -> None:
         try:
             ocr_key = self.OCR_LABELS.get(self.ocr_var.get(), "windows")
-            provider_key = self.PROVIDER_VALUES.get(self.provider_var.get(), "mymemory")
+            provider_key = self.PROVIDER_VALUES.get(self.provider_var.get(), "google")
             fallback_key = self.PROVIDER_VALUES.get(
                 self.fallback_provider_var.get(), "argos"
             )
             if fallback_key == provider_key:
-                fallback_key = "argos" if provider_key != "argos" else "mymemory"
+                fallback_key = "argos" if provider_key != "argos" else "google"
             area_value = list(self.selected_area) if self.area_is_custom else None
             self.config.save(
                 {
@@ -282,6 +280,7 @@ class Application:
                     "dismiss_hotkey": self.dismiss_hotkey_var.get().strip().lower(),
                     "area": area_value,
                     "save_debug_screenshots": bool(self.save_debug_var.get()),
+                    "repair_incomplete": bool(self.repair_var.get()),
                 }
             )
         except Exception as error:
@@ -389,7 +388,7 @@ class Application:
                 "Идёт перевод. Дождитесь завершения перед повторным запуском."
             )
             return
-        provider = self.PROVIDER_VALUES.get(self.provider_var.get(), "mymemory")
+        provider = self.PROVIDER_VALUES.get(self.provider_var.get(), "google")
         fallback = self.PROVIDER_VALUES.get(self.fallback_provider_var.get(), "argos")
         self._append_log(
             f"Запуск: OCR={self.OCR_LABELS.get(self.ocr_var.get(), 'windows')}, "
@@ -403,6 +402,7 @@ class Application:
             provider,
             bool(self.hybrid_var.get()),
             fallback,
+            bool(self.repair_var.get()),
         )
         start_hotkey = self.start_hotkey_var.get().strip()
         if not start_hotkey:
@@ -439,20 +439,13 @@ class Application:
         )
         setup_thread.start()
 
-    def _prepare_runtime(self, settings: tuple[str, str, bool, str]) -> None:
-        ocr_kind, provider, hybrid_enabled, fallback_provider = settings
+    def _prepare_runtime(self, settings: tuple[str, str, bool, str, bool]) -> None:
+        ocr_kind, provider, hybrid_enabled, fallback_provider, repair_incomplete = settings
         new_ocr_worker = None
         translator = None
         try:
             if self._runtime is not None:
-                try:
-                    self._runtime.ocr_worker.close(timeout=1.5)
-                except Exception:
-                    pass
-                try:
-                    self._runtime.translator.close()
-                except Exception:
-                    pass
+                self._close_runtime(self._runtime)
                 self._runtime = None
 
             if ocr_kind == "windows":
@@ -492,10 +485,14 @@ class Application:
                 provider=provider,
                 hybrid_enabled=hybrid_enabled,
                 fallback_provider=fallback_provider,
+                repair_incomplete=repair_incomplete,
             )
             argos_ready = True
             if provider == "argos":
                 argos_ready = translator.check_language()
+                if argos_ready:
+                    self._append_log('Загружаю офлайн-модель перед первым захватом…')
+                    translator.warmup()
 
             runtime = RuntimeBundle(
                 settings=settings,
@@ -577,7 +574,6 @@ class Application:
             return
         try:
             self._capture_hotkey_text = start_hotkey
-            self._quick_area_hotkey_text = quick_hotkey
             bindings = [
                 (start_hotkey, lambda: self._events.put(("capture_request", "hotkey"))),
                 (quick_hotkey, lambda: self._events.put(("quick_area_request",))),
@@ -615,10 +611,6 @@ class Application:
         self.start_button.configure(text="Запущено", state="disabled")
         self.stop_button.configure(state="normal")
         self.capture_button.configure(state="normal")
-        self.ocr_combo.configure(state="disabled")
-        self.provider_combo.configure(state="disabled")
-        self.fallback_combo.configure(state="disabled")
-        self.hybrid_button.configure(state="disabled")
         self.select_area_button.configure(state="normal")
         reset_text = (
             "любая клавиша"
@@ -657,7 +649,6 @@ class Application:
         self.start_button.configure(text="Запустить переводчик", state="normal")
         self.stop_button.configure(state="disabled")
         self.capture_button.configure(state="disabled")
-        self.ocr_combo.configure(state="readonly")
         self.ui.set_configuration_enabled(True)
         self.status_var.set(
             "Переводчик остановлен. Настройки можно изменить и запустить снова."
@@ -711,6 +702,7 @@ class Application:
         area = area_override or self.selected_area
         save_debug = bool(self.save_debug_var.get())
         runtime = self._runtime
+        needs_repaint = self.overlay.visible and not self.overlay.capture_excluded
         self.overlay.clear()
         self.status_var.set("Захват экрана → OCR → перевод…")
 
@@ -719,10 +711,11 @@ class Application:
         try:
             if self.root.state() == "normal":
                 self.root.iconify()
+                needs_repaint = True
         except tk.TclError:
             pass
-        self.root.after(
-            160,
+        self._capture_after_id = self.root.after(
+            160 if needs_repaint else 0,
             lambda: self._submit_capture(
                 capture_id, generation, area, save_debug, runtime
             ),
@@ -736,6 +729,7 @@ class Application:
         save_debug: bool,
         runtime: RuntimeBundle,
     ) -> None:
+        self._capture_after_id = None
         if (
             self._shutting_down
             or not self._active
@@ -788,6 +782,7 @@ class Application:
 
     def _poll_events(self) -> None:
         """Drain background events without ever stopping Tk's polling loop."""
+        self._poll_after_id = None
         if self._shutting_down:
             return
         self._drain_ui_logs()
@@ -854,7 +849,7 @@ class Application:
         finally:
             if not self._shutting_down:
                 try:
-                    self.root.after(20, self._poll_events)
+                    self._poll_after_id = self.root.after(20, self._poll_events)
                 except tk.TclError:
                     pass
 
@@ -914,9 +909,9 @@ class Application:
         if result.translated_regions:
             overlay_started = perf_counter()
             try:
-                self.overlay.show(
+                display = self.overlay.show(
                     result.translated_regions, result.area, result.source_image,
-                    backgrounds=result.backgrounds,
+                    prepared=result.overlay,
                 )
             except Exception as error:
                 self.status_var.set(f"Перевод получен, но оверлей не показан: {error}")
@@ -928,19 +923,20 @@ class Application:
             )
             if result.cache_hit:
                 self.status_var.set(
-                    f"Показано из кэша: {len(result.translated_regions)} блок(а/ов) · "
+                    f"Показано из кэша: {display.regions} блок(а/ов) · "
                     f"OCR и перевод повторно не выполнялись."
                 )
             else:
                 self.status_var.set(
-                    f"Готово: {len(result.translated_regions)} блок(а/ов) · "
+                    f"Готово: {display.regions} блок(а/ов), пропущено {display.skipped} · "
                     f"OCR {result.ocr_ms:.0f} мс · перевод {result.translate_ms:.0f} мс · "
                     f"захват {result.capture_ms:.0f} мс"
                 )
             self._append_log(
                 f"Захват #{capture_id}: OCR {result.ocr_ms:.0f} мс; "
                 f"перевод {result.translate_ms:.0f} мс; "
-                f"показано блоков: {len(result.translated_regions)}"
+                f"подготовка оверлея {result.overlay_prepare_ms:.0f} мс; "
+                f"показано блоков: {display.regions}, пропущено: {display.skipped}"
                 + (" (кэш кадра)." if result.cache_hit else ".")
             )
         elif result.recognized_count == 0:
@@ -984,6 +980,13 @@ class Application:
                     self._close_runtime(event[1])
         self._capture_cancel.set()
         self._active = False
+        for callback in (self._poll_after_id, self._capture_after_id):
+            if callback is not None:
+                try:
+                    self.root.after_cancel(callback)
+                except tk.TclError:
+                    pass
+        self._poll_after_id = self._capture_after_id = None
         self._remove_hotkeys()
         self._save_settings()
         pipeline_logger = getattr(self, "_pipeline_logger", None)
@@ -1041,6 +1044,7 @@ class Application:
 
     @staticmethod
     def _close_runtime(runtime: RuntimeBundle) -> None:
+        runtime.translation_executor.shutdown(wait=True, cancel_futures=True)
         try:
             runtime.ocr_worker.close(timeout=1.0)
         except Exception:

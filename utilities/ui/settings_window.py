@@ -32,17 +32,17 @@ class SettingsWindow:
 
         # Settings-only window: no product title banner or descriptive text.
         self.root.title("Настройки")
-        self.root.geometry("650x780")
-        self.root.minsize(610, 720)
+        self.root.geometry("650x810")
+        self.root.minsize(610, 750)
 
         self.ocr_var = tk.StringVar(
             value=self.ocr_values.get(
                 saved_settings.get("ocr", "windows"), "Windows OCR"
             )
         )
-        provider = saved_settings.get("provider", "mymemory")
+        provider = saved_settings.get("provider", "google")
         self.provider_var = tk.StringVar(
-            value=self.provider_labels.get(provider, self.provider_labels["mymemory"])
+            value=self.provider_labels.get(provider, self.provider_labels["google"])
         )
         fallback = saved_settings.get("fallback_provider", "argos")
         self.fallback_provider_var = tk.StringVar(
@@ -51,6 +51,7 @@ class SettingsWindow:
         self.hybrid_var = tk.BooleanVar(
             value=bool(saved_settings.get("hybrid_enabled", False))
         )
+        self.repair_var = tk.BooleanVar(value=bool(saved_settings.get('repair_incomplete', False)))
         self.start_hotkey_var = tk.StringVar(
             value=saved_settings.get("start_hotkey", "alt+t")
         )
@@ -146,6 +147,12 @@ class SettingsWindow:
         self.fallback_combo.pack(side="left", fill="x", expand=True, padx=(10, 0))
         self.fallback_combo.bind("<<ComboboxSelected>>", self._on_fallback_changed)
         self._update_hybrid_controls()
+
+        self.repair_check = ttk.Checkbutton(
+            engine_frame, text='Дорабатывать неполный перевод (медленнее)',
+            variable=self.repair_var, command=self._save,
+        )
+        self.repair_check.grid(row=6, column=0, sticky='w', pady=(5, 0))
 
         hotkey_frame = ttk.LabelFrame(outer, text="Горячие клавиши", padding=10)
         hotkey_frame.pack(fill="x", pady=(9, 0))
@@ -344,10 +351,6 @@ class SettingsWindow:
         ttk.Button(controls, text="Очистить журнал", command=self.clear_log).pack(
             side="left"
         )
-        self.log_file_label = ttk.Label(
-            controls, text="Файл: test/transcr.log", foreground="#666666"
-        )
-        self.log_file_label.pack(side="right")
 
     def append_log(self, message: str, level: int = 20) -> None:
         """Append a log event on Tk's main thread and keep memory use bounded."""
@@ -383,15 +386,15 @@ class SettingsWindow:
 
     def _on_primary_provider_changed(self, _event=None) -> None:
         if self.provider_var.get() == self.fallback_provider_var.get():
-            primary = self.provider_values.get(self.provider_var.get(), "mymemory")
-            replacement = "argos" if primary != "argos" else "mymemory"
+            primary = self.provider_values.get(self.provider_var.get(), "google")
+            replacement = "argos" if primary != "argos" else "google"
             self.fallback_provider_var.set(self.provider_labels[replacement])
         self._save()
 
     def _on_fallback_changed(self, _event=None) -> None:
         if self.provider_var.get() == self.fallback_provider_var.get():
-            primary = self.provider_values.get(self.provider_var.get(), "mymemory")
-            replacement = "argos" if primary != "argos" else "mymemory"
+            primary = self.provider_values.get(self.provider_var.get(), "google")
+            replacement = "argos" if primary != "argos" else "google"
             self.fallback_provider_var.set(self.provider_labels[replacement])
         self._save()
 
@@ -438,6 +441,7 @@ class SettingsWindow:
             state="normal" if enabled else "disabled"
         )
         self.save_debug_checkbutton.configure(state="normal" if enabled else "disabled")
+        self.repair_check.configure(state='normal' if enabled else 'disabled')
         self._update_hybrid_controls()
         self._update_dismiss_controls()
 

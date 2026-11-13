@@ -69,6 +69,6 @@ def recover_labels(image, lines, recognize):
             replaced.append((x1,y1,x2,y2))
             output.extend(recovered)
     # Drop the original merged row and any duplicates covered by its recovery.
-    return output + [l for l in lines if not any(
-        a <= (l.left+l.right)/2 <= c and b <= (l.top+l.bottom)/2 <= d
+    return output + [line for line in lines if not any(
+        a <= (line.left+line.right)/2 <= c and b <= (line.top+line.bottom)/2 <= d
         for a,b,c,d in replaced)]

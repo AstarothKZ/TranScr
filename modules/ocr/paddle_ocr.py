@@ -10,8 +10,12 @@ from modules.ocr.types import OCRText
 class PaddleOCRModule:
     """Альтернативный OCR через PaddleOCR 3.x."""
 
-    def __init__(self) -> None:
+    def __init__(self, cpu_threads: int | None = None) -> None:
         cpu_count = os.cpu_count() or 4
+        if cpu_threads is None:
+            cpu_threads = int(os.getenv('TRANSCR_PADDLE_THREADS', str(min(2, cpu_count))))
+        if cpu_threads < 1:
+            raise ValueError('Число потоков PaddleOCR должно быть положительным')
         self.ocr = PaddleOCR(
             text_detection_model_name="PP-OCRv6_small_det",
             text_recognition_model_name="PP-OCRv6_small_rec",
@@ -19,7 +23,7 @@ class PaddleOCRModule:
             # large headings. A tighter crop keeps overlay geometry local.
             text_det_unclip_ratio=1.0,
             device="cpu",
-            cpu_threads=min(8, cpu_count),
+            cpu_threads=min(cpu_threads, cpu_count),
             enable_mkldnn=True,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
@@ -31,7 +35,9 @@ class PaddleOCRModule:
         texts: list[OCRText] = []
 
         for result in results:
-            data = result.json["res"]
+            # OCRResult is already a mapping. Its JSON export also serializes
+            # auxiliary image/detection arrays that this adapter never reads.
+            data = result
             rec_texts = data.get("rec_texts", [])
             rec_scores = data.get("rec_scores", [])
             rec_boxes = data.get("rec_boxes", [])

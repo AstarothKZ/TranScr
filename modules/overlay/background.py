@@ -53,8 +53,10 @@ def prepare_background(frame: np.ndarray, box: tuple[int, int, int, int]) -> Bac
         samples = np.concatenate((crop[0], crop[-1], crop[:, 0], crop[:, -1]))
     # Find a broad color cluster, without letting strokes inside the box vote
     # for the background. Use its median, not a quantization-bin center.
-    bins, counts = np.unique(samples//32, axis=0, return_counts=True)
-    seed = np.median(samples[np.all(samples//32 == bins[counts.argmax()], axis=1)], axis=0)
+    quantized = samples.astype(np.int16)//32
+    keys = quantized[:, 0]*64+quantized[:, 1]*8+quantized[:, 2]
+    dominant = np.bincount(keys, minlength=512).argmax()
+    seed = np.median(samples[keys == dominant], axis=0)
     distances = np.max(np.abs(samples.astype(float)-seed), axis=1)
     nearby = samples[distances <= 32]
     bg = np.median(nearby, axis=0)

@@ -1,7 +1,11 @@
 """Argos Translate provider for offline translation."""
 
 from pathlib import Path
+import os
+from threading import RLock
 from tkinter import filedialog, messagebox
+
+from .batching import RequestBudget, join_parts, text_parts
 
 
 class ArgosTranslateProvider:
@@ -9,54 +13,108 @@ class ArgosTranslateProvider:
         self.from_code = from_code
         self.to_code = to_code
         self.root = root
-        self._translation = None
+        self._package = None
+        self._engine = None
+        self._lock = RLock()
 
     def translate(self, text: str) -> str:
-        if self._translation is None:
-            self._translation = self._resolve_translation()
-        return self._translation.translate(text)
+        result = self.translate_many([text])[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
-    def _resolve_translation(self):
-        argos_translate = self._get_argos_translate()
-        installed_languages = argos_translate.get_installed_languages()
-        source = next(
-            (
-                language
-                for language in installed_languages
-                if language.code == self.from_code
-            ),
-            None,
-        )
-        if source is None:
-            raise RuntimeError(f"В Argos не установлен язык: {self.from_code}")
+    def _find_package(self):
+        import argostranslate.package as package
 
-        translation = next(
+        return next(
             (
                 item
-                for item in source.translations_from
-                if item.to_lang.code == self.to_code
+                for item in package.get_installed_packages()
+                if item.from_code == self.from_code and item.to_code == self.to_code
             ),
             None,
         )
-        if translation is None:
+
+    def _ensure_engine(self):
+        if self._engine is not None:
+            return
+        try:
+            import ctranslate2
+            from argostranslate import settings
+        except ImportError as error:
             raise RuntimeError(
-                f"В Argos не найдена модель {self.from_code} → {self.to_code}. "
-                "Установите соответствующий языковой пакет."
+                "Argos не установлен. Установите requirements-optional.txt"
+            ) from error
+        self._package = self._find_package()
+        if self._package is None:
+            raise RuntimeError(
+                f"В Argos не найдена модель {self.from_code} → {self.to_code}"
             )
-        return translation
+        self._beam_size = int(settings.get_setting("ARGOS_BEAM_SIZE", "2"))
+        compute = settings.get_setting(
+            "ARGOS_COMPUTE_TYPE", "int8" if settings.device == "cpu" else "auto"
+        )
+        self._engine = ctranslate2.Translator(
+            str(self._package.package_path / "model"),
+            device=settings.device,
+            compute_type=compute,
+            inter_threads=int(settings.get_setting("ARGOS_INTER_THREADS", "1")),
+            intra_threads=int(
+                settings.get_setting(
+                    "ARGOS_INTRA_THREADS", str(min(4, os.cpu_count() or 4))
+                )
+            ),
+        )
+
+    def translate_many(self, texts, *, cancel=None, deadline=None):
+        budget = RequestBudget(cancel, deadline)
+        parts = text_parts(texts, 1000)
+        if not parts:
+            return [""] * len(texts)
+        try:
+            while not self._lock.acquire(timeout=0.05):
+                budget.check()
+            try:
+                budget.check()
+                self._ensure_engine()
+                budget.check()
+                tokens = [self._package.tokenizer.encode(part.text) for part in parts]
+                prefix = self._package.target_prefix
+                translated = self._engine.translate_batch(
+                    tokens,
+                    target_prefix=[[prefix]] * len(tokens) if prefix else None,
+                    replace_unknowns=True,
+                    max_batch_size=1024,
+                    batch_type="tokens",
+                    beam_size=max(1, self._beam_size),
+                    num_hypotheses=1,
+                    return_scores=False,
+                    length_penalty=0.2,
+                    max_input_length=0,
+                    max_decoding_length=max(256, max(map(len, tokens)) * 4),
+                )
+                budget.check()
+                values = []
+                for result in translated:
+                    value = self._package.tokenizer.decode(result.hypotheses[0])
+                    if prefix and value.startswith(prefix):
+                        value = value[len(prefix) :]
+                    values.append(value.strip())
+                return join_parts(texts, parts, values)
+            finally:
+                self._lock.release()
+        except Exception as error:
+            return [error] * len(texts)
+
+    def warmup(self):
+        with self._lock:
+            self._ensure_engine()
 
     def check_language(self) -> bool:
         try:
-            import argostranslate.translate as argos_translate
+            return self._find_package() is not None
         except ImportError:
             return False
-        for language in argos_translate.get_installed_languages():
-            if language.code == self.from_code:
-                return any(
-                    item.to_lang.code == self.to_code
-                    for item in language.translations_from
-                )
-        return False
 
     def manual_model_installation(self) -> bool:
         try:
@@ -88,24 +146,15 @@ class ArgosTranslateProvider:
             return False
         try:
             argos_package.install_from_path(Path(path))
-            self._translation = None
+            self._engine = self._package = None
         except Exception as error:
             print(f"Не удалось установить модель Argos: {error}", flush=True)
             return False
         print("Модель Argos установлена.", flush=True)
         return self.check_language()
 
-    @staticmethod
-    def _get_argos_translate():
-        try:
-            import argostranslate.translate as argos_translate
-        except ImportError as error:
-            raise RuntimeError(
-                "Argos Translate не установлен. Для офлайн-перевода выполните: "
-                "pip install -r requirements-optional.txt"
-            ) from error
-        return argos_translate
-
     def close(self) -> None:
-        """Argos owns no HTTP or file handles at this layer."""
-        return None
+        with self._lock:
+            if self._engine is not None:
+                self._engine.unload_model()
+                self._engine = None

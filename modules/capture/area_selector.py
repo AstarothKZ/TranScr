@@ -19,7 +19,6 @@ class AreaSelector:
         on_selected: Callable[[ScreenBounds], None],
         on_cancel: Callable[[], None] | None = None,
     ) -> None:
-        self.root = root
         self.screen_left, self.screen_top, self.screen_width, self.screen_height = (
             screen_bounds
         )
