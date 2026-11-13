@@ -11,8 +11,7 @@ class StylingTests(unittest.TestCase):
     def test_casing_and_names(self):
         self.assertEqual(preserve_case('DEFENCE', 'защита'), 'ЗАЩИТА')
         self.assertEqual(preserve_case('cockpit space', 'Пространство В Кабине'), 'пространство в кабине')
-        self.assertEqual(preserve_case('Sight Head Dimensions', 'размеры головки'), 'Размеры головки')
-        self.assertEqual(preserve_case('November 5, 2026', '5 ноября 2026 г.'), '5 ноября 2026 г.')
+        self.assertEqual(preserve_case('Sight Head Dimensions', 'размеры головки'), 'Размеры Головки')
         self.assertEqual(preserve_case('The Saab RGS system', 'система Saab RGS'), 'Система Saab RGS')
 
     def test_contrast_increases_for_light_and_dark_backgrounds(self):

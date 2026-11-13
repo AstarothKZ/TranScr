@@ -3,11 +3,24 @@
 import re
 import unicodedata
 
-# Numeric labels, scores and numeric-only dates need no translation.
+# Numeric labels, scores, dates and similar data should not be translated.
 _NUMBERS_AND_SEPARATORS = re.compile(r"^[\s\d.,:/\\\-–—+()%$€£¥₽#№]+$")
+_NUMERIC_DATE = re.compile(r"^(?:\d{1,4}[./-]){1,2}\d{1,4}$|^\d{1,2}:\d{2}(?::\d{2})?$")
+_MONTH_DATE = re.compile(
+    r"^(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\.?\s+\d{1,2}(?:,?\s+\d{2,4})?|"
+    r"\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\.?\s*\d{0,4})$",
+    re.IGNORECASE,
+)
 _COMPACT_CODE = re.compile(r"^[A-Za-z0-9]+(?:[-_/][A-Za-z0-9]+)*$")
 _CONTACT = re.compile(r"^(?:https?://|www\.)?[^\s/@]+(?:@[^\s/]+)?\.[A-Za-z]{2,}(?:/\S*)?$", re.IGNORECASE)
 _DIMENSIONS = re.compile(r"^\d+\s*[xх×✕*]\s*\d+(?:\s*[xх×✕*]\s*\d+)?(?:\s*(?:px|пкс|пикс))?$", re.IGNORECASE)
+_LETTERS_ONLY = re.compile(r"^[A-Za-z]{5,}$")
+_VOWELS = re.compile(r"[aeiou]", re.IGNORECASE)
+_LETTERS_OR_DIGITS = re.compile(r"[A-Za-zА-Яа-яЁё0-9]")
 _SIZE_LABEL = re.compile(
     r"(?:[BВБ▣□]\s+)?[+-]?\d+(?:[\s\u00a0]\d{3})*(?:[.,]\d+)?\s*"
     r"(?:[kmgtpeкмгтпе]\s*[iи]?\s*[bб6]|[bб]|bytes?|байт(?:а|ов)?)(?:\s*/\s*(?:s|sec|с|сек))?",
@@ -63,7 +76,7 @@ def untranslated_fragments(text: str) -> list[tuple[int, int]]:
 
 
 def should_translate(text: str) -> bool:
-    """Reject numeric data and identifiers; dates containing words translate.
+    """Return False for numeric labels, dates and isolated code-like strings.
 
     This intentionally filters only a whole OCR region. It will not remove a
     code embedded inside a meaningful sentence, such as ``The A-4SU entered``.
@@ -75,9 +88,9 @@ def should_translate(text: str) -> bool:
     label = unicodedata.normalize('NFKC', value).strip(' [](){}|·•:;')
     if re.fullmatch(r'(?:[^\s]+\.)?(?:png|jpe?g|gif|webp|bmp|tiff|pdf)(?:\s*[|·•]\s*[\d.,]+\s*(?:kb|mb|gb))?', label, re.IGNORECASE):
         return False
-    if not value or not any(c.isalnum() for c in value):
+    if not value or not _LETTERS_OR_DIGITS.search(value):
         return False
-    if sum(c.isalnum() for c in value) <= 2:
+    if len(''.join(c for c in value if c.isalnum())) <= 3:
         return False
 
     if is_ui_label(value):
@@ -94,6 +107,22 @@ def should_translate(text: str) -> bool:
         return False
     if _SIZE_LABEL.fullmatch(value.rstrip(" .;:")):
         return False
+    if _NUMERIC_DATE.fullmatch(value) or _MONTH_DATE.fullmatch(value):
+        return False
+
+    # A compact token made of letters/digits and optional separators is likely
+    # an identifier (7385-A, A-4SU, 3247dgh), not natural-language text.
+    if not any(char.isspace() for char in value) and _COMPACT_CODE.fullmatch(value):
+        if any(char.isdigit() for char in value) and any(
+            char.isalpha() for char in value
+        ):
+            return False
+
+    # Conservative safeguard for OCR garbage like "qwrty": do not discard
+    # ordinary uppercase abbreviations or short words.
+    if _LETTERS_ONLY.fullmatch(value) and value.islower():
+        if not _VOWELS.search(value):
+            return False
 
     return any(char.isalpha() for char in value)
 

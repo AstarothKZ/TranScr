@@ -20,16 +20,15 @@ class FooterLayoutTests(unittest.TestCase):
         self.assertEqual(translator._mymemory_provider.translate.call_count,len(labels))
         self.assertEqual(translator.translate_text('Store'), 'Ответ сервиса: Store')
 
-    def test_footer_keeps_one_source_row_and_all_pixels(self):
+    def test_wrapped_footer_keeps_readable_size_and_all_pixels(self):
         for text,translated,width in [('User Agreement','Условия использования',114),
                                       ('Privacy Policy','Политика приватности',99),
                                       ('Support','Поддержка',58)]:
             with self.subTest(text=text):
-                source = OCRText(text,0,0,width,18)
-                region = TextRegion(text,0,0,width,18,10,(source,))
+                source = OCRText(text,0,0,width,48,label_size=10)
+                region = TextRegion(text,0,0,width,48,10,(source,))
                 row = fit_region(region,translated,PixelFont)[0]
-                self.assertEqual(row.source,source)
-                self.assertEqual(len(row.runs),1)
+                self.assertEqual(row.font.size,10)
                 self.assertEqual(' '.join(value for _,_,value in row.runs),translated)
                 image = Image.new('RGBA',(width+80,128))
                 draw = ImageDraw.Draw(image)
@@ -39,4 +38,4 @@ class FooterLayoutTests(unittest.TestCase):
                 self.assertGreaterEqual(bounds[0],40)
                 self.assertGreaterEqual(bounds[1],40)
                 self.assertLessEqual(bounds[2],40+width)
-                self.assertLessEqual(bounds[3],58)
+                self.assertLessEqual(bounds[3],88)

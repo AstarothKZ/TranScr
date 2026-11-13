@@ -11,8 +11,7 @@ class OverlayTests(unittest.TestCase):
     @patch('modules.overlay.screen_overlay.render_row', side_effect=ValueError('clipped text'))
     def test_failed_text_render_never_paints_source_background(self, render):
         overlay = self.overlay()
-        shown = overlay.show([(TextRegion('Original',0,0,200,24,16),'Перевод')], (0,0,300,100))
-        self.assertEqual(shown, 0)
+        overlay.show([(TextRegion('Original',0,0,200,24,16),'Перевод')], (0,0,300,100))
         overlay.canvas.create_rectangle.assert_not_called()
         overlay.canvas.create_image.assert_not_called()
 
@@ -63,14 +62,13 @@ class OverlayTests(unittest.TestCase):
 
     def test_overlapping_regions_do_not_crash(self):
         overlay = self.overlay()
-        shown = overlay.show(
+        overlay.show(
             [
                 (TextRegion("first", 0, 0, 100, 20, 12), "Один"),
                 (TextRegion("second", 0, 0, 100, 20, 12), "Два"),
             ],
             (0, 0, 300, 200),
         )
-        self.assertEqual(shown, 1)
         self.assertEqual(overlay.canvas.create_rectangle.call_count, 1)
 
 

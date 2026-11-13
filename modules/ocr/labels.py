@@ -32,9 +32,13 @@ def recover_labels(image, lines, recognize):
         if not 3 <= len(groups) <= 16:
             continue
         recovered = []
-        for a, b in groups:
-            # Keep the detected ink extent; whitespace is not layout capacity.
-            left, right = max(0, a-1), min(crop.shape[1], b+1)
+        for index,(a,b) in enumerate(groups):
+            # Give each link its share of the verified empty inter-link gap,
+            # retaining four pixels between neighbouring translated blocks.
+            previous = groups[index-1][1] if index else max(0,a-8)
+            following = groups[index+1][0] if index+1<len(groups) else min(crop.shape[1],b+8)
+            left = max(0,a-max(2,(a-previous)//2-2))
+            right = min(crop.shape[1],b+max(2,(following-b)//2-2))
             # OCR needs breathing room around short condensed white labels.
             recognition_left, recognition_right = max(0,a-2), min(crop.shape[1],b+2)
             padded = ImageOps.expand(Image.fromarray(crop[:,recognition_left:recognition_right]),
@@ -42,14 +46,25 @@ def recover_labels(image, lines, recognize):
             enlarged = np.array(padded.resize(
                 (padded.width*3,padded.height*3), Image.Resampling.LANCZOS))
             items = recognize(enlarged)
-            if not items:
-                recovered = []
-                break
-            # A recovery must account for every detected label. Partial OCR
-            # must never discard the original row or unrelated source words.
-            recovered.append(replace(items[0], text=" ".join(i.text for i in items),
-                left=int(x1+left), right=int(x1+right), top=line.top,
-                bottom=line.bottom, polygon=None, label_size=None))
+            for item in items:
+                recovered.append(replace(item, left=int(x1+left),
+                    right=int(x1+right), top=line.top,
+                    bottom=line.bottom, polygon=None))
+        # Reserve only empty space below this navigation row for wrapped
+        # translations. All labels use one source-derived font size.
+        for i, item in enumerate(recovered):
+            bottom = min(image.shape[0], line.bottom+2*h)
+            for other in lines:
+                if other.top > line.bottom and min(item.right,other.right)>max(item.left,other.left):
+                    bottom = min(bottom, other.top-3)
+            extra = image[line.bottom:bottom,item.left:item.right,:3]
+            if extra.size and np.max(np.ptp(extra.reshape(-1,3),axis=0)) <= 12:
+                recovered[i] = replace(item, bottom=bottom, label_size=max(8, round(h*.65)), bold=False)
+        styled = [item for item in recovered if item.label_size is not None]
+        if styled:
+            size = min(item.label_size for item in styled)
+            recovered = [replace(item,label_size=size) if item.label_size is not None else item
+                         for item in recovered]
         if recovered:
             replaced.append((x1,y1,x2,y2))
             output.extend(recovered)

@@ -7,7 +7,7 @@ from modules.text_processing.text_regions import group_ocr_texts
 
 
 class ContactLabelsTests(unittest.TestCase):
-    def test_contact_captions_share_weight_but_keep_source_width(self):
+    def test_contact_captions_share_weight_and_available_blank_width(self):
         from modules.text_processing.geometry import prepare_lines
         image = np.full((220,300,3), 245, dtype=np.uint8)
         lines = []
@@ -15,7 +15,7 @@ class ContactLabelsTests(unittest.TestCase):
             lines.extend([OCRText('Business', 10,y,80,y+20),
                           OCRText('biz@example.com',10,y+24,230,y+48)])
         captions = [l for l in prepare_lines(image,lines) if l.text=='Business']
-        self.assertEqual([l.right for l in captions], [80]*3)
+        self.assertEqual([l.right for l in captions], [230]*3)
         self.assertTrue(all(l.bold is not None for l in captions))
         self.assertEqual(len({l.bold for l in captions}), 1)
 

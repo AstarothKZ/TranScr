@@ -37,12 +37,14 @@ class TextRegion:
     @property
     def looks_justified(self) -> bool:
         """Recognize stable column edges despite indents and incomplete OCR rows."""
-        if len(self.lines) < 3:
+        if len(self.lines) < 2:
             return False
         ordered = sorted(self.lines, key=lambda line: (line.top, line.left))
         heights = [max(1, line.bottom - line.top) for line in ordered]
         tolerance = max(3, round(median(heights) * 0.55))
-        body = ordered[:-1]
+        if len(ordered) == 2 and abs(ordered[0].left-ordered[1].left) > tolerance:
+            return False
+        body = ordered[:-1] if len(ordered) > 2 else ordered[:1]
         widths = sorted(line.right-line.left for line in body)
         reference = median(widths[len(widths)//2:])
         if reference < 20:
@@ -106,11 +108,6 @@ def _pair_geometry(first: OCRText, second: OCRText) -> tuple[float, set[str]] | 
     height_b = max(1, lower.bottom - lower.top)
     reference_height = float(median((height_a, height_b)))
     if max(height_a, height_b) / min(height_a, height_b) > 1.60:
-        return None
-    # A heading and its description are distinct translation units even when
-    # the detector's padding makes their rectangles appear equally tall.
-    if (upper.right-upper.left < (lower.right-lower.left)*.55
-            and height_a > height_b*1.15):
         return None
 
     # Lines must be visually consecutive, not side-by-side items or paragraphs
@@ -204,12 +201,9 @@ def _flow_score(first: OCRText, second: OCRText, preferred_mode: str | None) -> 
 def separate_row_overlaps(items: list[OCRText]) -> list[OCRText]:
     """Split small vertical OCR-box overlaps without joining horizontal text."""
     result = list(items)
-    ordered = sorted(range(len(result)), key=lambda index: result[index].top)
-    for position, i in enumerate(ordered):
-        for j in ordered[position+1:]:
+    for i in sorted(range(len(result)), key=lambda index: result[index].top):
+        for j in range(len(result)):
             upper, lower = result[i], result[j]
-            if items[j].top >= upper.bottom:
-                break
             h = min(upper.bottom - upper.top, lower.bottom - lower.top)
             overlap = upper.bottom - lower.top
             shared = min(upper.right, lower.right) - max(upper.left, lower.left)
@@ -265,12 +259,6 @@ def group_ocr_texts(items: list[OCRText], *, context: list[OCRText] = ()) -> lis
         candidates: list[tuple[float, int]] = []
         for flow_index, flow in enumerate(flows):
             previous = flow[-1]
-            # Retired flows cannot resume after a blank line. Reject them
-            # before computing medians and scanning their paragraph history.
-            if item.top - previous.bottom > max(
-                3, max(previous.bottom-previous.top, item.bottom-item.top) * .8
-            ):
-                continue
             if id(previous) in table_cells:
                 continue
             # A short sentence-ending row followed by a full row starts a new
@@ -344,6 +332,52 @@ def group_ocr_texts(items: list[OCRText], *, context: list[OCRText] = ()) -> lis
                 lines=lines,
             )
         )
+    anchors = [region for region in regions if len(region.lines) >= 5
+               and region.looks_justified
+               and region.width >= median(l.bottom-l.top for l in region.lines)*12]
+    for i, region in enumerate(regions):
+        if region.alignment == 'justify' or not region.lines:
+            continue
+        height = median(l.bottom-l.top for l in region.lines)
+        for anchor in anchors:
+            anchor_height = median(l.bottom-l.top for l in anchor.lines)
+            gap = max(0, region.top-anchor.bottom, anchor.top-region.bottom)
+            if (max(height,anchor_height)/min(height,anchor_height) <= 1.6
+                    and gap <= height*3
+                    and abs(region.right-anchor.right) <= height
+                    and region.width >= anchor.width*.75
+                    and abs(region.left-anchor.left) <= anchor.width*.25):
+                regions[i] = replace(region, alignment_hint='justify')
+                break
+    # OCR can miss the first/last words of an interior line. Recover the
+    # repeated column boundary, while keeping paragraph tails and drop-cap
+    # indents intact. This also covers source words omitted by recognition.
+    for i, region in enumerate(regions):
+        if region.alignment != 'justify' or not region.lines:
+            continue
+        height = median(line.bottom-line.top for line in region.lines)
+        widths = sorted(line.right-line.left for line in region.lines)
+        width = median(widths[len(widths)//2:])
+        body = [line for line in region.lines if line.right-line.left >= width*.9]
+        left = round(median(line.left for line in body))
+        right = round(median(line.right for line in body))
+        corrected = []
+        for index, line in enumerate(region.lines):
+            x1, x2 = line.left, line.right
+            if (index == 0 and line.left-left > height
+                    and height < right-line.right <= width*.3):
+                # Missing words at both ends are not a paragraph indent.
+                x1, x2 = left, right
+            if (line.left-left > height*.6 and abs(line.right-right) <= height
+                    and (index >= 3 or (region.alignment_hint == 'justify'
+                         and line.left-left > height*2))):
+                x1 = left
+            if (index < len(region.lines)-1 and abs(line.left-left) <= height
+                    and height < right-line.right <= width*.3):
+                x2 = right
+            corrected.append(replace(line,left=x1,right=x2))
+        regions[i] = replace(region, lines=tuple(corrected),
+            left=min(line.left for line in corrected),right=max(line.right for line in corrected))
     return sorted(regions, key=lambda region: (region.top, region.left))
 
 

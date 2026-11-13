@@ -1,7 +1,5 @@
 import asyncio
 import math
-from dataclasses import replace
-from PIL import Image
 from typing import Any, cast
 
 import numpy as np
@@ -32,11 +30,6 @@ class WindowsOCRModule:
         self.engine: OcrEngine = engine
 
     def recognize(self, image: np.ndarray, *, _split_labels=True) -> list[OCRText]:
-        original = image
-        scale = min(2.0, OcrEngine.max_image_dimension/max(image.shape[:2])) if _split_labels else 1.0
-        if scale > 1:
-            image = np.array(Image.fromarray(image).resize(
-                (round(image.shape[1]*scale), round(image.shape[0]*scale)), Image.Resampling.LANCZOS))
         if max(image.shape[:2]) > OcrEngine.max_image_dimension:
             raise ValueError(
                 f"Область превышает предел Windows OCR ({OcrEngine.max_image_dimension} px). "
@@ -76,14 +69,9 @@ class WindowsOCRModule:
                 )
             )
         if _split_labels:
-            if scale > 1:
-                texts = [replace(item, left=max(0,math.floor(item.left/scale)),
-                         top=max(0,math.floor(item.top/scale)),
-                         right=min(original.shape[1],math.ceil(item.right/scale)),
-                         bottom=min(original.shape[0],math.ceil(item.bottom/scale))) for item in texts]
             from modules.ocr.labels import recover_labels
             recognize = lambda crop: self.recognize(crop, _split_labels=False)
-            return recover_labels(original, texts, recognize)
+            return recover_labels(image, texts, recognize)
         return texts
 
     async def _recognize_async(self, bitmap: SoftwareBitmap) -> Any:

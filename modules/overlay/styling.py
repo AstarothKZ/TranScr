@@ -19,11 +19,10 @@ def preserve_case(source, translated):
         return translated.upper()
     if letters.islower():
         translated = translated.lower()
+    elif source.istitle():
+        translated = translated.title()
     elif next((c for c in source if c.isalpha()), '').isupper():
-        # Capitalize only a leading letter: an English month followed by a day
-        # can become a Russian date starting with a digit, with a lower-case month.
-        translated = re.sub(r'^(\s*)([^\W\d_])',
-                            lambda m: m[1] + m[2].upper(), translated, count=1)
+        translated = re.sub(r'[^\W\d_]', lambda m: m.group().upper(), translated, count=1)
     # Preserve the spelling of names/abbreviations present in both languages.
     originals = {word.casefold(): word for word in re.findall(r'[^\W\d_]+', source)}
     return re.sub(r'[^\W\d_]+', lambda m: originals.get(m.group().casefold(), m.group()), translated)
@@ -37,10 +36,7 @@ def estimate_bold(image, region):
     if image is None:
         return False
     votes = []
-    # A region is a typographic flow. Five distributed rows suffice for its
-    # weight vote; rendering both reference fonts for every row is expensive.
-    sample = [lines[i] for i in sorted(set(np.linspace(0, len(lines)-1, min(5, len(lines)), dtype=int)))]
-    for line in sample:
+    for line in lines:
         crop = image[line.top:line.bottom, line.left:line.right, :3]
         if not crop.size or line.bottom-line.top < 8:
             continue
@@ -62,4 +58,4 @@ def estimate_bold(image, region):
             refs.append(float((glyphs > 100).mean()) if glyphs.size else 0)
         if refs[1] > refs[0]:
             votes.append(density > refs[0] + (refs[1]-refs[0])*.65)
-    return bool(votes) and bool(sum(votes) > len(votes)/2)
+    return bool(votes) and sum(votes) > len(votes)/2

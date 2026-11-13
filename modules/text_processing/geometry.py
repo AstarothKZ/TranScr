@@ -38,6 +38,8 @@ def _components(mask):
 
 def refine_box(image, line, neighbors=()):
     """Recover glyph extents, excluding broad picture strips and viewer edges."""
+    if line.label_size is not None:
+        return line
     height, width = image.shape[:2]
     x1, x2 = max(0,line.left-3), min(width,line.right+3)
     y1, y2 = max(0,line.top-4), min(height,line.bottom+4)
@@ -78,9 +80,8 @@ def refine_box(image, line, neighbors=()):
         return line
     # OCR owns the source extent. Pixel refinement may recover clipped edges,
     # but must never discard the beginning or end of a recognized word.
-    if line.polygon is None:
-        left, right = min(left, line.left), max(right, line.right)
-        top, bottom = min(top, line.top), max(bottom, line.bottom)
+    left, right = min(left, line.left), max(right, line.right)
+    top, bottom = min(top, line.top), max(bottom, line.bottom)
     return replace(line, left=int(left), top=int(top), right=int(right), bottom=int(bottom))
 
 
@@ -130,7 +131,9 @@ def prepare_lines(image, lines):
                                     bottom=max(first.bottom,other.bottom))
                 result[i] = replace(first, text='')
                 break
-    # Contact captions may share weight, but never borrow address geometry.
+    # Contact captions are a repeated typographic group. Use the available
+    # width above their address instead of shrinking each caption to the width
+    # of its original English words. Expand only across uniform empty pixels.
     captions = []
     contacts = [line for line in result if is_contact_address(line.text)]
     for i, line in enumerate(result):
@@ -141,10 +144,15 @@ def prepare_lines(image, lines):
                  if 0 <= other.top-line.bottom <= (line.bottom-line.top)*1.5]
         if not below:
             continue
+        right = max([line.right] + [other.right for other in column])
+        extra = image[line.top:line.bottom, line.right:right, :3]
+        if extra.size and np.max(np.ptp(extra.reshape(-1,3), axis=0)) > 6:
+            continue
+        result[i] = replace(line, right=right)
         captions.append(i)
     if len(captions) >= 3:
         from modules.overlay.styling import estimate_bold
-        weight = bool(sum(estimate_bold(image,result[i]) for i in captions) >= len(captions)/2)
+        weight = sum(estimate_bold(image,result[i]) for i in captions) >= len(captions)/2
         for i in captions:
             result[i] = replace(result[i], bold=weight)
     return [line for line in result if line.text]

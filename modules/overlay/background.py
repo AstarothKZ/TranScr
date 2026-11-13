@@ -58,25 +58,11 @@ def prepare_background(frame: np.ndarray, box: tuple[int, int, int, int]) -> Bac
     distances = np.max(np.abs(samples.astype(float)-seed), axis=1)
     nearby = samples[distances <= 32]
     bg = np.median(nearby, axis=0)
-    # Tight light labels can have more ink than background in their inner rim.
-    # Trust a uniform exterior when the box corners agree with it. This avoids
-    # white panels behind white footer links without mistaking paper surrounded
-    # by a dark image viewer for a dark text background.
-    flat_exterior = False
-    if len(outside) >= 8:
-        exterior = np.median(outside, axis=0)
-        corners = crop[[0, 0, -1, -1], [0, -1, 0, -1]].astype(float)
-        flat_exterior = bool(
-            np.percentile(np.max(np.abs(outside.astype(float)-exterior), axis=1), 90) <= 4
-            and np.sum(np.max(np.abs(corners-exterior), axis=1) <= 12) >= 3
-        )
-        if flat_exterior:
-            bg = exterior
     # A large detection can include the viewer surround in its own margins.
     # Require substantial interior evidence before overturning a dark border.
     interior = crop.reshape(-1, 3).astype(float)
     brighter = np.min(interior-bg, axis=1) > 40
-    if not flat_exterior and np.mean(bg) < 70 and brighter.mean() > .35:
+    if np.mean(bg) < 70 and brighter.mean() > .35:
         from modules.text_processing.geometry import _components
         # Paper is one broad connected surface; white letters are separate
         # components. Density alone cannot distinguish the two.

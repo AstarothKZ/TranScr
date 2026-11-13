@@ -199,10 +199,6 @@ class Application:
                 "save_settings": self._save_settings,
             },
         )
-        if self._session_file_handler is not None:
-            self.ui.log_file_label.configure(
-                text=f"Файл: {Path(self._session_file_handler.baseFilename).name}"
-            )
         # Explicit aliases keep controller references visible to IDE/type checkers.
         self.ocr_var = self.ui.ocr_var
         self.provider_var = self.ui.provider_var
@@ -918,7 +914,7 @@ class Application:
         if result.translated_regions:
             overlay_started = perf_counter()
             try:
-                shown_count = self.overlay.show(
+                self.overlay.show(
                     result.translated_regions, result.area, result.source_image,
                     backgrounds=result.backgrounds,
                 )
@@ -930,24 +926,21 @@ class Application:
                 f"Оверлей {(perf_counter() - overlay_started) * 1000:.0f} мс; "
                 f"от запроса до показа {(perf_counter() - self._capture_started) * 1000:.0f} мс."
             )
-            if shown_count == 0:
-                self.status_var.set("Перевод получен, но не помещается в исходные рамки. Подробности — в журнале.")
-                return
             if result.cache_hit:
                 self.status_var.set(
-                    f"Показано из кэша: {shown_count} из {len(result.translated_regions)} блок(а/ов) · "
+                    f"Показано из кэша: {len(result.translated_regions)} блок(а/ов) · "
                     f"OCR и перевод повторно не выполнялись."
                 )
             else:
                 self.status_var.set(
-                    f"Показано: {shown_count} из {len(result.translated_regions)} блок(а/ов) · "
+                    f"Готово: {len(result.translated_regions)} блок(а/ов) · "
                     f"OCR {result.ocr_ms:.0f} мс · перевод {result.translate_ms:.0f} мс · "
                     f"захват {result.capture_ms:.0f} мс"
                 )
             self._append_log(
                 f"Захват #{capture_id}: OCR {result.ocr_ms:.0f} мс; "
                 f"перевод {result.translate_ms:.0f} мс; "
-                f"показано блоков: {shown_count} из {len(result.translated_regions)}"
+                f"показано блоков: {len(result.translated_regions)}"
                 + (" (кэш кадра)." if result.cache_hit else ".")
             )
         elif result.recognized_count == 0:
@@ -955,7 +948,7 @@ class Application:
             self._append_log("OCR не распознал текст.")
         elif result.filtered_count == result.recognized_count and not result.errors:
             self.status_var.set(
-                "В выбранной области только числовые данные, короткие метки или кодоподобные строки."
+                "В выбранной области только числа, даты или кодоподобные строки."
             )
             self._append_log(f"Пропущено фильтром блоков: {result.filtered_count}.")
         elif result.errors:
