@@ -1,10 +1,4 @@
-# TranScr
-
-Экранный переводчик для Windows 10/11.
-
 ## Первый запуск
-
-Установите Python 3.11 с Tkinter и откройте PowerShell в папке проекта:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -16,7 +10,7 @@ py -3.11 -m venv .venv
 
 Google Translate и MyMemory работают без ключа. Выберите Google Translate в настройках основным или резервным переводчиком; дополнительные пакеты не нужны. Для Yandex Cloud скопируйте `.env.example` в `.env` и заполните `YANDEX_API_KEY` и `YC_FOLDER_ID`.
 
-Google подключён через веб-адреса без ключа, аналогично [Translumo](https://github.com/ramjke/Translumo/blob/master/src/Translumo.Translation/Google/GoogleTranslator.cs). При ошибке используется резервный Google-адрес; успешный адрес переиспользуется в текущем сеансе. Запросы к Google выполняются последовательно, результаты сохраняются в общем кэше. Доступность веб-адресов и ограничения сервиса могут меняться; ошибки видны в журнале, в гибридном режиме доступен другой резервный переводчик.
+Google подключён через веб-адреса без ключа, аналогично [Translumo](https://github.com/ramjke/Translumo/blob/master/src/Translumo.Translation/Google/GoogleTranslator.cs). При ошибке используется резервный Google-адрес; успешный адрес переиспользуется в текущем сеансе.
 
 ## Использование
 
@@ -33,25 +27,9 @@ PaddleOCR и офлайн-перевод Argos — дополнительные 
 - `main.py` — запуск; `core` — управление приложением, настройки, горячие клавиши и пайплайн.
 - `modules` — захват, OCR, обработка текста, перевод и оверлей.
 - `modules/overlay/rendering.py` — общая растровая отрисовка для приложения и визуальных проверок; `fonts.py` — ограниченный кэш шрифтов.
-- `utilities/ui` — окно настроек; `tests` — автоматические проверки.
-- `logs` — отдельный журнал каждого запуска с датой и временем в имени. Ошибки также видны на вкладке «Журнал».
-- `test/screenshots` — отладочные снимки.
+- `utilities/ui` — окно настроек.
+- `logs` — отдельный журнал каждого запуска. Ошибки также видны на вкладке «Журнал».
 - Остальное содержимое `test` — временные результаты ручных проверок, исключённые из Git.
 - `%LOCALAPPDATA%/TranScr/settings.json` — пользовательские настройки; `.env` — локальные API-данные.
-
-Проверки: `.venv\Scripts\python.exe -m unittest discover -s tests -v`.
-
-Для автономной проверки наложения без запросов к переводчикам:
-
-```powershell
-.venv\Scripts\python.exe -m tests.render_capture_preview source.png ocr.json translations.json test/preview.png
-```
-
-`ocr.json` — список полей `OCRText` или Paddle-результат с `rec_texts` и
-`rec_boxes`; `translations.json` — объект «первая исходная строка блока →
-перевод всего блока». Координаты должны соответствовать изображению;
-`--width 780` позволяет воспроизвести масштаб захвата. Пропущенные в словаре
-блоки остаются без изменений. Для простой синтетической проверки:
-`.venv\Scripts\python.exe -m tests.render_layout_preview`.
 
 Зависимости: `requirements.txt` нужен для основного запуска; `requirements-optional.txt` — только для PaddleOCR и Argos. Tkinter входит в установку Python, отдельно через pip не устанавливается. Тесты используют стандартный `unittest` и зависимости приложения.
