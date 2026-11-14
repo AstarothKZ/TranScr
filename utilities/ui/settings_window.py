@@ -76,6 +76,13 @@ class SettingsWindow:
 
         self._configuration_enabled = True
         self._build_widgets()
+        self.root.update_idletasks()
+        width = max(520, self.root.winfo_reqwidth())
+        height = max(740, self.root.winfo_reqheight())
+        self.root.minsize(
+            max(480, self.root.winfo_reqwidth()), self.root.winfo_reqheight()
+        )
+        self.root.geometry(f"{width}x{height}")
 
     def _build_widgets(self) -> None:
         container = ttk.Frame(self.root, padding=10)
@@ -105,25 +112,8 @@ class SettingsWindow:
         self.notebook.add(self.settings_tab, text="Настройки")
         self.notebook.add(self.log_tab, text="Журнал")
 
-        viewport = ttk.Frame(self.settings_tab)
-        viewport.pack(fill="both", expand=True)
-        viewport.rowconfigure(0, weight=1)
-        viewport.columnconfigure(0, weight=1)
-        self._settings_canvas = tk.Canvas(viewport, highlightthickness=0, borderwidth=0)
-        self._settings_canvas.grid(row=0, column=0, sticky="nsew")
-        self._settings_scrollbar = ttk.Scrollbar(
-            viewport, orient="vertical", command=self._settings_canvas.yview
-        )
-        self._settings_scrollbar.grid(row=0, column=1, sticky="ns")
-        self._settings_canvas.configure(yscrollcommand=self._settings_scrollbar.set)
-        outer = self._settings_form = ttk.Frame(self._settings_canvas, padding=12)
-        outer.pack_propagate(False)
-        self._settings_window = self._settings_canvas.create_window(
-            0, 0, window=outer, anchor="nw"
-        )
-        outer.bind("<Configure>", self._update_settings_scroll)
-        self._settings_canvas.bind("<Configure>", self._resize_settings)
-        self.root.bind("<MouseWheel>", self._scroll_settings, add="+")
+        outer = ttk.Frame(self.settings_tab, padding=12)
+        outer.pack(fill="both", expand=True)
 
         engine_frame = ttk.LabelFrame(outer, text="Обработка и перевод", padding=10)
         engine_frame.pack(fill="x")
@@ -184,7 +174,6 @@ class SettingsWindow:
         hotkey_frame = ttk.LabelFrame(outer, text="Горячие клавиши", padding=10)
         hotkey_frame.pack(fill="x", pady=(9, 0))
         hotkey_frame.columnconfigure(1, weight=1)
-        self._settings_sections = (engine_frame, hotkey_frame)
 
         ttk.Label(hotkey_frame, text="Запуск перевода").grid(
             row=0, column=0, sticky="w"
@@ -242,12 +231,8 @@ class SettingsWindow:
             row=4, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
         )
         self.screenshot_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
-        # Reserve the area controls before the scrollable form, including at
-        # large Windows font scales or the minimum window height.
-        area_frame = ttk.LabelFrame(
-            self.settings_tab, text="Область захвата", padding=10
-        )
-        area_frame.pack(side="bottom", fill="x", padx=12, pady=(0, 10), before=viewport)
+        area_frame = ttk.LabelFrame(outer, text="Область захвата", padding=10)
+        area_frame.pack(fill="x", pady=(9, 0))
         area_label = ttk.Label(area_frame, textvariable=self.area_var, wraplength=430)
         area_label.pack(anchor="w")
         area_frame.bind(
@@ -257,7 +242,7 @@ class SettingsWindow:
         area_buttons = ttk.Frame(area_frame)
         area_buttons.pack(fill="x", pady=(7, 0))
         self.select_area_button = ttk.Button(
-            area_buttons, text="Выбрать мышью…", command=self._callbacks["select_area"]
+            area_buttons, text="Выбрать мышью", command=self._callbacks["select_area"]
         )
         self.select_area_button.pack(side="left", ipadx=3, ipady=1)
         self.full_screen_button = ttk.Button(
@@ -266,15 +251,6 @@ class SettingsWindow:
             command=self._callbacks["select_full_screen"],
         )
         self.full_screen_button.pack(side="left", padx=(8, 0), ipadx=3, ipady=1)
-        self.save_screenshot_button = ttk.Button(
-            area_frame,
-            text="Сохранить снимок с оверлеем",
-            command=self._callbacks["save_screenshot"],
-        )
-        self.save_screenshot_button.pack(anchor="w", pady=(7, 0))
-        ttk.Label(area_frame, text="Снимки: screenshots", foreground="#666666").pack(
-            anchor="w", pady=(3, 0)
-        )
 
         buttons = ttk.Frame(container)
         # Allocate actions before the expanding notebook, just like status.
@@ -336,6 +312,7 @@ class SettingsWindow:
             wrap="word",
             state="disabled",
             height=20,
+            width=1,
             font=("Consolas", 9),
             background="#17191c",
             foreground="#e7e7e7",
@@ -399,37 +376,6 @@ class SettingsWindow:
             replacement = "argos" if primary != "argos" else "google"
             self.fallback_provider_var.set(self.provider_labels[replacement])
         self._save()
-
-    def _resize_settings(self, event) -> None:
-        self._settings_canvas.itemconfigure(self._settings_window, width=event.width)
-        self._update_settings_scroll()
-
-    def _update_settings_scroll(self, _event=None) -> None:
-        # Keep the form constrained to the viewport width even when large
-        # Windows fonts make a child request a wider natural size.
-        height = (
-            # Two 12 px form margins and the 9 px gap between sections.
-            sum(section.winfo_reqheight() for section in self._settings_sections) + 33
-        )
-        self._settings_form.configure(height=height)
-        self._settings_canvas.configure(scrollregion=self._settings_canvas.bbox("all"))
-        if height > self._settings_canvas.winfo_height():
-            self._settings_scrollbar.grid()
-        else:
-            self._settings_scrollbar.grid_remove()
-            self._settings_canvas.yview_moveto(0)
-
-    def _scroll_settings(self, event):
-        if (
-            self.notebook.select() != str(self.settings_tab)
-            or isinstance(event.widget, ttk.Combobox)
-            or self._settings_form.winfo_reqheight()
-            <= self._settings_canvas.winfo_height()
-            or not event.delta
-        ):
-            return
-        self._settings_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-        return "break"
 
     def toggle_hybrid(self) -> None:
         self.hybrid_var.set(not self.hybrid_var.get())

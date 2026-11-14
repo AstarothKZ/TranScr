@@ -204,7 +204,6 @@ class Application:
                 "select_area": self.select_area,
                 "select_full_screen": self.select_full_screen,
                 "start": self.start,
-                "save_screenshot": self._save_screenshot,
                 "stop": self.stop,
                 "save_settings": self._save_settings,
             },
@@ -221,7 +220,6 @@ class Application:
         self.dismiss_mode_var = self.ui.dismiss_mode_var
         self.dismiss_hotkey_var = self.ui.dismiss_hotkey_var
         self.area_var = self.ui.area_var
-        self.save_screenshot_button = self.ui.save_screenshot_button
         self.status_var = self.ui.status_var
         self.select_area_button = self.ui.select_area_button
         self.start_button = self.ui.start_button
@@ -657,7 +655,6 @@ class Application:
             return
         self._saving_screenshot = True
         self._restore_after_screenshot = False
-        self.save_screenshot_button.configure(state="disabled")
         settings = self._runtime_settings if self._active else None
         prefix = screenshot_prefix(settings)
         result = self._last_capture_result if self._active and self.overlay.visible else None
@@ -878,7 +875,6 @@ class Application:
                         self.quick_select_area()
                     elif kind in {"screenshot_saved", "screenshot_error"}:
                         self._saving_screenshot = False
-                        self.save_screenshot_button.configure(state="normal")
                         if self._restore_after_screenshot and not self._active and not self._starting:
                             self.root.deiconify()
                         self._restore_after_screenshot = False
