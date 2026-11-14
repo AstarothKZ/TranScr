@@ -15,8 +15,6 @@ class ScreenOverlay:
     """Draw translated text inside the original OCR rectangle without expanding it."""
 
     TRANSPARENT_COLOR = "#ff00ff"
-    TEXT_COLOR = "#111111"
-    BOX_COLOR = "#ffffff"
 
     def __init__(self, root: tk.Tk) -> None:
         self.window = tk.Toplevel(root)
@@ -33,7 +31,7 @@ class ScreenOverlay:
             relief="flat",
         )
         self.canvas.pack(fill="both", expand=True)
-        self._images = []
+        self._photo = None
         self._closed = False
         self.visible = False
         self.capture_excluded = False
@@ -69,9 +67,8 @@ class ScreenOverlay:
             self._screen_bounds = screen_bounds
         if self._prepared is not prepared:
             self.canvas.delete('all')
-            photo = ImageTk.PhotoImage(prepared.image, master=self.window)
-            self._images = [photo]
-            self.canvas.create_image(prepared.left, prepared.top, anchor='nw', image=photo)
+            self._photo = ImageTk.PhotoImage(prepared.image, master=self.window)
+            self.canvas.create_image(prepared.left, prepared.top, anchor='nw', image=self._photo)
             self._prepared = prepared
         self.window.deiconify()
         self.visible = True
@@ -97,7 +94,7 @@ class ScreenOverlay:
             return
         self._closed = True
         self.visible = False
-        self._images = []
+        self._photo = None
         self._prepared = None
         try:
             self.window.destroy()

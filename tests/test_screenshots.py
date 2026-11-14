@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.config import AppConfig
 from core.hotkeys import HotkeyRouter
-from core.screenshots import compose_screenshot, save_screenshot, screenshot_prefix
+from utilities.screenshots import compose_screenshot, save_screenshot, screenshot_prefix
 
 
 class ScreenshotTests(unittest.TestCase):
@@ -114,6 +114,14 @@ class ScreenshotTests(unittest.TestCase):
             )
             self.assertEqual(config.load()["screenshot_hotkey"], "")
             self.assertNotIn("unused_old_option", config.load())
+
+    def test_quick_area_hotkey_can_be_empty_after_reload(self):
+        with TemporaryDirectory() as directory:
+            config = AppConfig(Path(directory))
+            config.path = Path(directory) / "settings.json"
+            for value in ("", "  ", None):
+                config.save({"quick_area_hotkey": value})
+                self.assertEqual(config.load()["quick_area_hotkey"], "")
 
     def test_hotkey_match_does_not_call_any_key_dismiss(self):
         save, dismiss = Mock(), Mock()
@@ -322,6 +330,55 @@ class ApplicationScreenshotTests(unittest.TestCase):
             app._configure_idle_hotkeys()
             hook.assert_not_called()
         self.assertIn("должно отличаться", app.status_var.get())
+
+    def test_translation_starts_without_quick_area_or_screenshot_hotkeys(self):
+        app = self.app
+        app.quick_area_hotkey_var.set("")
+        app.screenshot_hotkey_var.set("")
+        app._runtime_settings = ("windows", "google", False, "argos", False)
+        with (
+            patch("core.application.keyboard.hook"),
+            patch("core.application.keyboard.unhook"),
+        ):
+            app._activate_hotkeys()
+            self.assertTrue(app._active)
+            self.assertEqual(len(app._hotkey_router.bindings), 1)
+            self.assertNotIn("выбрать и перевести", app.status_var.get())
+            app.stop()
+
+    def test_area_controls_remain_visible_at_minimum_window_size(self):
+        app = self.app
+        app.root.deiconify()
+        app.root.geometry("480x620")
+        app.root.update()
+        for name in (
+            "select_area_button",
+            "full_screen_button",
+            "save_screenshot_button",
+            "start_button",
+            "stop_button",
+        ):
+            widget = getattr(app.ui, name)
+            self.assertTrue(widget.winfo_ismapped(), name)
+            while widget is not app.root:
+                parent = widget.master
+                self.assertGreaterEqual(
+                    widget.winfo_rootx(), parent.winfo_rootx(), name
+                )
+                self.assertGreaterEqual(
+                    widget.winfo_rooty(), parent.winfo_rooty(), name
+                )
+                self.assertLessEqual(
+                    widget.winfo_rootx() + widget.winfo_width(),
+                    parent.winfo_rootx() + parent.winfo_width(),
+                    name,
+                )
+                self.assertLessEqual(
+                    widget.winfo_rooty() + widget.winfo_height(),
+                    parent.winfo_rooty() + parent.winfo_height(),
+                    name,
+                )
+                widget = parent
 
 
 if __name__ == "__main__":

@@ -15,7 +15,6 @@ from core.config import AppConfig
 from core.hotkeys import HotkeyRouter, modifier_is_down
 from core.pipeline import CaptureResult, FrameCache, RuntimeBundle, process_capture
 from core.session_logging import SessionFileHandler
-from core.screenshots import compose_screenshot, save_screenshot, screenshot_prefix
 from modules.capture.area_selector import AreaSelector
 from modules.capture.screen_capture import ScreenCapturer
 from modules.capture.types import ScreenBounds
@@ -25,6 +24,7 @@ from modules.overlay.screen_overlay import ScreenOverlay
 from modules.translation.catalog import PROVIDER_LABELS
 from modules.translation.translator import Translator
 from utilities.ui.settings_window import SettingsWindow
+from utilities.screenshots import compose_screenshot, save_screenshot, screenshot_prefix
 
 
 class QueueLogHandler(logging.Handler):
@@ -204,7 +204,6 @@ class Application:
                 "select_area": self.select_area,
                 "select_full_screen": self.select_full_screen,
                 "start": self.start,
-                "capture": lambda: self._events.put(("capture_request", "button")),
                 "save_screenshot": self._save_screenshot,
                 "stop": self.stop,
                 "save_settings": self._save_settings,
@@ -226,7 +225,6 @@ class Application:
         self.status_var = self.ui.status_var
         self.select_area_button = self.ui.select_area_button
         self.start_button = self.ui.start_button
-        self.capture_button = self.ui.capture_button
         self.stop_button = self.ui.stop_button
 
     def _append_log(self, text: str, level: int | None = None) -> None:
@@ -557,43 +555,22 @@ class Application:
                 "Сейчас обрабатывается захват; повторный запуск пока недоступен."
             )
             return
-        self._remove_hotkeys()
         start_hotkey = self.start_hotkey_var.get().strip().lower().replace(" ", "")
         dismiss_mode = self.dismiss_mode_var.get()
         dismiss_hotkey = self.dismiss_hotkey_var.get().strip().lower().replace(" ", "")
         quick_hotkey = self.quick_area_hotkey_var.get().strip().lower().replace(" ", "")
-        if (
-            not quick_hotkey
-            or quick_hotkey == start_hotkey
-            or (dismiss_mode == "hotkey" and quick_hotkey == dismiss_hotkey)
-        ):
-            self.ui.set_configuration_enabled(True)
-            self.start_button.configure(state="normal")
-            self.status_var.set(
-                "Сочетание быстрого выбора должно быть задано и отличаться от запуска и сброса."
-            )
-            return
-        if not start_hotkey:
-            self.ui.set_configuration_enabled(True)
-            self.status_var.set("Сочетание запуска не задано.")
-            self.start_button.configure(state="normal")
-            return
-        if dismiss_mode == "hotkey" and (
-            not dismiss_hotkey or dismiss_hotkey == start_hotkey
-        ):
-            self.ui.set_configuration_enabled(True)
-            self.status_var.set(
-                "Сочетание сброса должно быть задано и отличаться от запуска."
-            )
-            self.start_button.configure(state="normal")
-            return
         try:
+            if not start_hotkey:
+                raise ValueError("Сочетание запуска не задано")
+            if dismiss_mode == "hotkey" and not dismiss_hotkey:
+                raise ValueError("Сочетание сброса не задано")
             screenshot_hotkey = self._screenshot_hotkey()
             self._capture_hotkey_text = start_hotkey
             bindings = [
                 (start_hotkey, lambda: self._events.put(("capture_request", "hotkey"))),
-                (quick_hotkey, lambda: self._events.put(("quick_area_request",))),
             ]
+            if quick_hotkey:
+                bindings.append((quick_hotkey, lambda: self._events.put(("quick_area_request",))))
             if dismiss_mode == "hotkey":
                 bindings.append(
                     (
@@ -618,16 +595,17 @@ class Application:
         self.ui.set_configuration_enabled(False)
         self.start_button.configure(text="Запущено", state="disabled")
         self.stop_button.configure(state="normal")
-        self.capture_button.configure(state="normal")
         self.select_area_button.configure(state="normal")
         reset_text = (
             "любая клавиша"
             if self.dismiss_mode_var.get() == "any"
             else self.dismiss_hotkey_var.get().strip()
         )
-        self.status_var.set(
-            f"Работает. {self._capture_hotkey_text} — перевод; {quick_hotkey} — выбрать и перевести; {reset_text} — сброс."
-        )
+        actions = [f"{start_hotkey} — перевод"]
+        if quick_hotkey:
+            actions.append(f"{quick_hotkey} — выбрать и перевести")
+        actions.append(f"{reset_text} — сброс")
+        self.status_var.set("Работает. " + "; ".join(actions) + ".")
         mode_text = self.PROVIDER_LABELS[runtime_settings[1]]
         if runtime_settings[2]:
             mode_text += f" → резерв: {self.PROVIDER_LABELS[runtime_settings[3]]}"
@@ -736,7 +714,6 @@ class Application:
         self._last_capture_result = None
         self.start_button.configure(text="Запустить переводчик", state="normal")
         self.stop_button.configure(state="disabled")
-        self.capture_button.configure(state="disabled")
         self.ui.set_configuration_enabled(True)
         self.status_var.set(
             "Переводчик остановлен. Настройки можно изменить и запустить снова."

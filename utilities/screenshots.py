@@ -1,4 +1,4 @@
-"""Explicit PNG export, independent of the OCR and desktop-capture pipeline."""
+"""PNG export utilities, independent of application state and screen capture."""
 
 import re
 from pathlib import Path

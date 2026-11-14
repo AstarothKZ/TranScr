@@ -81,19 +81,19 @@ class AppConfig:
         for key, default in (
             ("start_hotkey", "alt+t"),
             ("dismiss_hotkey", "esc"),
-            ("quick_area_hotkey", "alt+q"),
         ):
             value = result.get(key)
             if not isinstance(value, str) or not value.strip() or len(value) > 64:
                 result[key] = default
             else:
                 result[key] = value.strip().lower()
-        screenshot_hotkey = result.get("screenshot_hotkey")
-        result["screenshot_hotkey"] = (
-            screenshot_hotkey.strip().lower()
-            if isinstance(screenshot_hotkey, str) and len(screenshot_hotkey) <= 64
-            else ""
-        )
+        for key in ("quick_area_hotkey", "screenshot_hotkey"):
+            value = result.get(key)
+            result[key] = (
+                value.strip().lower()
+                if isinstance(value, str) and len(value) <= 64
+                else ""
+            )
         if not isinstance(result["repair_incomplete"], bool):
             result["repair_incomplete"] = False
         if not self._valid_area(result["area"]):

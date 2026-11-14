@@ -32,8 +32,8 @@ class SettingsWindow:
 
         # Settings-only window: no product title banner or descriptive text.
         self.root.title("Настройки")
-        self.root.geometry("650x810")
-        self.root.minsize(610, 750)
+        self.root.geometry("520x740")
+        self.root.minsize(480, 620)
 
         self.ocr_var = tk.StringVar(
             value=self.ocr_values.get(
@@ -51,7 +51,9 @@ class SettingsWindow:
         self.hybrid_var = tk.BooleanVar(
             value=bool(saved_settings.get("hybrid_enabled", False))
         )
-        self.repair_var = tk.BooleanVar(value=bool(saved_settings.get('repair_incomplete', False)))
+        self.repair_var = tk.BooleanVar(
+            value=bool(saved_settings.get("repair_incomplete", False))
+        )
         self.start_hotkey_var = tk.StringVar(
             value=saved_settings.get("start_hotkey", "alt+t")
         )
@@ -81,12 +83,20 @@ class SettingsWindow:
 
         # Reserve status space before the expandable notebook can consume it.
         self.status_label = ttk.Label(
-            container, textvariable=self.status_var, wraplength=590,
-            justify="left", foreground="#245c35", padding=(4, 8),
+            container,
+            textvariable=self.status_var,
+            wraplength=590,
+            justify="left",
+            foreground="#245c35",
+            padding=(4, 8),
         )
         self.status_label.pack(side="bottom", fill="x")
-        container.bind('<Configure>', lambda event: self.status_label.configure(
-            wraplength=max(200, event.width-28)))
+        container.bind(
+            "<Configure>",
+            lambda event: self.status_label.configure(
+                wraplength=max(200, event.width - 28)
+            ),
+        )
 
         self.notebook = ttk.Notebook(container)
         self.notebook.pack(fill="both", expand=True)
@@ -95,8 +105,25 @@ class SettingsWindow:
         self.notebook.add(self.settings_tab, text="Настройки")
         self.notebook.add(self.log_tab, text="Журнал")
 
-        outer = ttk.Frame(self.settings_tab, padding=12)
-        outer.pack(fill="both", expand=True)
+        viewport = ttk.Frame(self.settings_tab)
+        viewport.pack(fill="both", expand=True)
+        viewport.rowconfigure(0, weight=1)
+        viewport.columnconfigure(0, weight=1)
+        self._settings_canvas = tk.Canvas(viewport, highlightthickness=0, borderwidth=0)
+        self._settings_canvas.grid(row=0, column=0, sticky="nsew")
+        self._settings_scrollbar = ttk.Scrollbar(
+            viewport, orient="vertical", command=self._settings_canvas.yview
+        )
+        self._settings_scrollbar.grid(row=0, column=1, sticky="ns")
+        self._settings_canvas.configure(yscrollcommand=self._settings_scrollbar.set)
+        outer = self._settings_form = ttk.Frame(self._settings_canvas, padding=12)
+        outer.pack_propagate(False)
+        self._settings_window = self._settings_canvas.create_window(
+            0, 0, window=outer, anchor="nw"
+        )
+        outer.bind("<Configure>", self._update_settings_scroll)
+        self._settings_canvas.bind("<Configure>", self._resize_settings)
+        self.root.bind("<MouseWheel>", self._scroll_settings, add="+")
 
         engine_frame = ttk.LabelFrame(outer, text="Обработка и перевод", padding=10)
         engine_frame.pack(fill="x")
@@ -123,9 +150,7 @@ class SettingsWindow:
             state="readonly",
         )
         self.provider_combo.grid(row=3, column=0, sticky="ew", pady=(3, 6))
-        self.provider_combo.bind(
-            "<<ComboboxSelected>>", self._on_primary_provider_changed
-        )
+        self.provider_combo.bind("<<ComboboxSelected>>", self._on_provider_changed)
 
         hybrid_row = ttk.Frame(engine_frame)
         hybrid_row.grid(row=4, column=0, sticky="ew", pady=(0, 5))
@@ -142,21 +167,24 @@ class SettingsWindow:
             textvariable=self.fallback_provider_var,
             values=list(self.provider_values),
             state="readonly",
-            width=32,
+            width=18,
         )
         self.fallback_combo.pack(side="left", fill="x", expand=True, padx=(10, 0))
-        self.fallback_combo.bind("<<ComboboxSelected>>", self._on_fallback_changed)
+        self.fallback_combo.bind("<<ComboboxSelected>>", self._on_provider_changed)
         self._update_hybrid_controls()
 
         self.repair_check = ttk.Checkbutton(
-            engine_frame, text='Дорабатывать неполный перевод (медленнее)',
-            variable=self.repair_var, command=self._save,
+            engine_frame,
+            text="Дорабатывать неполный перевод (медленнее)",
+            variable=self.repair_var,
+            command=self._save,
         )
-        self.repair_check.grid(row=6, column=0, sticky='w', pady=(5, 0))
+        self.repair_check.grid(row=6, column=0, sticky="w", pady=(5, 0))
 
         hotkey_frame = ttk.LabelFrame(outer, text="Горячие клавиши", padding=10)
         hotkey_frame.pack(fill="x", pady=(9, 0))
         hotkey_frame.columnconfigure(1, weight=1)
+        self._settings_sections = (engine_frame, hotkey_frame)
 
         ttk.Label(hotkey_frame, text="Запуск перевода").grid(
             row=0, column=0, sticky="w"
@@ -165,15 +193,11 @@ class SettingsWindow:
             hotkey_frame, textvariable=self.start_hotkey_var, width=22
         )
         self.start_hotkey_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        ttk.Label(
-            hotkey_frame, text="Например: alt+t, ctrl+shift+x, f8", foreground="#666666"
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(2, 7))
-
         ttk.Label(hotkey_frame, text="Сброс перевода").grid(
-            row=2, column=0, sticky="nw"
+            row=1, column=0, sticky="nw", pady=(8, 0)
         )
         dismiss_options = ttk.Frame(hotkey_frame)
-        dismiss_options.grid(row=2, column=1, sticky="ew", padx=(10, 0))
+        dismiss_options.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(8, 0))
         self.dismiss_any_radio = ttk.Radiobutton(
             dismiss_options,
             text="Любая клавиша",
@@ -194,43 +218,41 @@ class SettingsWindow:
             hotkey_frame, textvariable=self.dismiss_hotkey_var, width=22
         )
         self.dismiss_hotkey_entry.grid(
-            row=3, column=1, sticky="ew", padx=(10, 0), pady=(5, 0)
+            row=2, column=1, sticky="ew", padx=(10, 0), pady=(5, 0)
         )
-        ttk.Label(
-            hotkey_frame,
-            text="Пример: esc или ctrl+shift+backspace",
-            foreground="#666666",
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(2, 0))
         self._update_dismiss_controls()
 
         ttk.Label(hotkey_frame, text="Выделить и перевести").grid(
-            row=5, column=0, sticky="w", pady=(8, 0)
+            row=3, column=0, sticky="w", pady=(8, 0)
         )
         self.quick_area_hotkey_entry = ttk.Entry(
             hotkey_frame, textvariable=self.quick_area_hotkey_var, width=22
         )
         self.quick_area_hotkey_entry.grid(
-            row=5, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
+            row=3, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
         )
         self.quick_area_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
         ttk.Label(hotkey_frame, text="Сохранить снимок").grid(
-            row=6, column=0, sticky="w", pady=(8, 0)
+            row=4, column=0, sticky="w", pady=(8, 0)
         )
         self.screenshot_hotkey_entry = ttk.Entry(
             hotkey_frame, textvariable=self.screenshot_hotkey_var, width=22
         )
         self.screenshot_hotkey_entry.grid(
-            row=6, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
+            row=4, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
         )
         self.screenshot_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
-        ttk.Label(hotkey_frame, text="Можно оставить пустым", foreground="#666666").grid(
-            row=7, column=1, sticky="w", padx=(10, 0), pady=(2, 0)
+        # Reserve the area controls before the scrollable form, including at
+        # large Windows font scales or the minimum window height.
+        area_frame = ttk.LabelFrame(
+            self.settings_tab, text="Область захвата", padding=10
         )
-
-        area_frame = ttk.LabelFrame(outer, text="Область захвата", padding=10)
-        area_frame.pack(fill="x", pady=(9, 0))
-        ttk.Label(area_frame, textvariable=self.area_var, wraplength=570).pack(
-            anchor="w"
+        area_frame.pack(side="bottom", fill="x", padx=12, pady=(0, 10), before=viewport)
+        area_label = ttk.Label(area_frame, textvariable=self.area_var, wraplength=430)
+        area_label.pack(anchor="w")
+        area_frame.bind(
+            "<Configure>",
+            lambda event: area_label.configure(wraplength=max(180, event.width - 24)),
         )
         area_buttons = ttk.Frame(area_frame)
         area_buttons.pack(fill="x", pady=(7, 0))
@@ -250,77 +272,50 @@ class SettingsWindow:
             command=self._callbacks["save_screenshot"],
         )
         self.save_screenshot_button.pack(anchor="w", pady=(7, 0))
-        ttk.Label(area_frame, text="PNG → папка screenshots рядом с приложением",
-                  foreground="#666666").pack(anchor="w", pady=(3, 0))
+        ttk.Label(area_frame, text="Снимки: screenshots", foreground="#666666").pack(
+            anchor="w", pady=(3, 0)
+        )
 
         buttons = ttk.Frame(container)
         # Allocate actions before the expanding notebook, just like status.
         buttons.pack(side="bottom", fill="x", pady=(8, 4), before=self.notebook)
-        for column in range(3):
+        for column in range(2):
             buttons.columnconfigure(column, weight=1, uniform="action_buttons")
-        # Classic Tk buttons are used for the three main actions. On some Windows
+        # Classic Tk buttons are used for the main actions. On some Windows
         # ttk themes these controls were rendered as extremely thin blank strips.
         # Explicit font, padding, colours and width keep their labels visible.
-        action_font = ("Segoe UI", 9, "bold")
-        self.start_button = tk.Button(
-            buttons,
-            text="Запустить переводчик",
-            command=self._callbacks["start"],
-            font=action_font,
-            width=19,
+        action_style = dict(
+            font=("Segoe UI", 9, "bold"),
             height=2,
             padx=6,
             pady=4,
-            bg="#d9ead3",
-            fg="#173b1b",
-            activebackground="#c5e1bc",
             disabledforeground="#666666",
             relief="raised",
             borderwidth=1,
             cursor="hand2",
             takefocus=True,
         )
-        self.start_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.capture_button = tk.Button(
+        self.start_button = tk.Button(
             buttons,
-            text="Перевести сейчас",
-            command=self._callbacks["capture"],
-            state="disabled",
-            font=action_font,
-            width=17,
-            height=2,
-            padx=6,
-            pady=4,
-            bg="#e8edf3",
-            fg="#1f2937",
-            activebackground="#d4dee9",
-            disabledforeground="#777777",
-            relief="raised",
-            borderwidth=1,
-            cursor="hand2",
-            takefocus=True,
+            text="Запустить переводчик",
+            command=self._callbacks["start"],
+            **action_style,
+            bg="#d9ead3",
+            fg="#173b1b",
+            activebackground="#c5e1bc",
         )
-        self.capture_button.grid(row=0, column=1, sticky="ew", padx=4)
+        self.start_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.stop_button = tk.Button(
             buttons,
             text="Остановить",
             command=self._callbacks["stop"],
             state="disabled",
-            font=action_font,
-            width=12,
-            height=2,
-            padx=6,
-            pady=4,
+            **action_style,
             bg="#f4cccc",
             fg="#5b1111",
             activebackground="#edaaaa",
-            disabledforeground="#777777",
-            relief="raised",
-            borderwidth=1,
-            cursor="hand2",
-            takefocus=True,
         )
-        self.stop_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         self.start_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
         self.dismiss_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
@@ -398,19 +393,43 @@ class SettingsWindow:
         except tk.TclError:
             pass
 
-    def _on_primary_provider_changed(self, _event=None) -> None:
+    def _on_provider_changed(self, _event=None) -> None:
         if self.provider_var.get() == self.fallback_provider_var.get():
             primary = self.provider_values.get(self.provider_var.get(), "google")
             replacement = "argos" if primary != "argos" else "google"
             self.fallback_provider_var.set(self.provider_labels[replacement])
         self._save()
 
-    def _on_fallback_changed(self, _event=None) -> None:
-        if self.provider_var.get() == self.fallback_provider_var.get():
-            primary = self.provider_values.get(self.provider_var.get(), "google")
-            replacement = "argos" if primary != "argos" else "google"
-            self.fallback_provider_var.set(self.provider_labels[replacement])
-        self._save()
+    def _resize_settings(self, event) -> None:
+        self._settings_canvas.itemconfigure(self._settings_window, width=event.width)
+        self._update_settings_scroll()
+
+    def _update_settings_scroll(self, _event=None) -> None:
+        # Keep the form constrained to the viewport width even when large
+        # Windows fonts make a child request a wider natural size.
+        height = (
+            # Two 12 px form margins and the 9 px gap between sections.
+            sum(section.winfo_reqheight() for section in self._settings_sections) + 33
+        )
+        self._settings_form.configure(height=height)
+        self._settings_canvas.configure(scrollregion=self._settings_canvas.bbox("all"))
+        if height > self._settings_canvas.winfo_height():
+            self._settings_scrollbar.grid()
+        else:
+            self._settings_scrollbar.grid_remove()
+            self._settings_canvas.yview_moveto(0)
+
+    def _scroll_settings(self, event):
+        if (
+            self.notebook.select() != str(self.settings_tab)
+            or isinstance(event.widget, ttk.Combobox)
+            or self._settings_form.winfo_reqheight()
+            <= self._settings_canvas.winfo_height()
+            or not event.delta
+        ):
+            return
+        self._settings_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
 
     def toggle_hybrid(self) -> None:
         self.hybrid_var.set(not self.hybrid_var.get())
@@ -448,14 +467,15 @@ class SettingsWindow:
         """Lock mutable settings while components are starting or running."""
         self._configuration_enabled = bool(enabled)
         widget_state = "readonly" if enabled else "disabled"
-        self.ocr_combo.configure(state=widget_state)
-        self.provider_combo.configure(state=widget_state)
-        self.start_hotkey_entry.configure(state="normal" if enabled else "disabled")
-        self.quick_area_hotkey_entry.configure(
-            state="normal" if enabled else "disabled"
-        )
-        self.screenshot_hotkey_entry.configure(state="normal" if enabled else "disabled")
-        self.repair_check.configure(state='normal' if enabled else 'disabled')
+        for widget in (self.ocr_combo, self.provider_combo):
+            widget.configure(state=widget_state)
+        for widget in (
+            self.start_hotkey_entry,
+            self.quick_area_hotkey_entry,
+            self.screenshot_hotkey_entry,
+            self.repair_check,
+        ):
+            widget.configure(state="normal" if enabled else "disabled")
         self._update_hybrid_controls()
         self._update_dismiss_controls()
 
