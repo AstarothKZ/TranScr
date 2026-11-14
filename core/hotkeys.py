@@ -4,14 +4,27 @@ import ctypes
 import os
 
 
+_MODIFIER_CODES = {
+    "alt": (0x12,), "ctrl": (0x11,), "control": (0x11,), "shift": (0x10,),
+    "windows": (0x5B, 0x5C), "left windows": (0x5B,), "right windows": (0x5C,),
+    "left alt": (0xA4,), "right alt": (0xA5,),
+    "left ctrl": (0xA2,), "right ctrl": (0xA3,),
+    "left shift": (0xA0,), "right shift": (0xA1,),
+}
+
+
+def normalize_hotkey(text: str) -> str:
+    """Remove separator whitespace while preserving names such as 'left ctrl'."""
+    return "+".join(" ".join(key.lower().split()) for key in text.split("+"))
+
+
 def modifier_is_down(name):
-    codes = {"alt": 0x12, "ctrl": 0x11, "control": 0x11, "shift": 0x10,
-             "windows": 0x5B, "left alt": 0xA4, "right alt": 0xA5,
-             "left ctrl": 0xA2, "right ctrl": 0xA3,
-             "left shift": 0xA0, "right shift": 0xA1}
-    if os.name != "nt" or name not in codes:
+    if os.name != "nt" or name not in _MODIFIER_CODES:
         return True
-    return bool(ctypes.windll.user32.GetAsyncKeyState(codes[name]) & 0x8000)
+    return any(
+        ctypes.windll.user32.GetAsyncKeyState(code) & 0x8000
+        for code in _MODIFIER_CODES[name]
+    )
 
 
 class HotkeyRouter:
@@ -23,6 +36,7 @@ class HotkeyRouter:
         self.dismiss = dismiss
         signatures = set()
         for text, callback in bindings:
+            text = normalize_hotkey(text)
             steps = parse_hotkey(text)
             if len(steps) != 1:
                 raise ValueError(
@@ -54,9 +68,7 @@ class HotkeyRouter:
             # Trigger on the final key, never when pressing a modifier after it.
             if code not in keys[-1]:
                 continue
-            if all(self.pressed & alternatives for alternatives in keys) and any(
-                code in alternatives for alternatives in keys
-            ):
+            if all(self.pressed & alternatives for alternatives in keys):
                 callback()
                 return
         if self.dismiss is not None:

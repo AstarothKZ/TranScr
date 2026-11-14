@@ -9,6 +9,8 @@ import numpy as np
 from modules.ocr.base import OCREngine
 from modules.ocr.types import OCRText
 
+LOGGER = logging.getLogger(__name__)
+
 
 class OCRWorker:
     """Выполняет OCR в фоне и не копит кадры в очереди."""
@@ -60,25 +62,21 @@ class OCRWorker:
             except Empty:
                 continue
 
+            failure = None
             try:
                 texts = self._ocr.recognize(image)
                 total_time_ms = (perf_counter() - started_at) * 1000
             except Exception as error:
-                with self._job_lock:
-                    try:
-                        if self._on_error is not None:
-                            self._on_error(error, started_at)
-                        else:
-                            logging.getLogger(__name__).error("Ошибка OCR: %s", error)
-                    except Exception:
-                        logging.getLogger(__name__).exception("Ошибка callback OCR")
-                    finally:
-                        self._job_pending = False
-            else:
-                with self._job_lock:
-                    try:
+                failure = error
+            with self._job_lock:
+                try:
+                    if failure is None:
                         self._on_result(texts, total_time_ms, started_at)
-                    except Exception:
-                        logging.getLogger(__name__).exception("Ошибка callback OCR")
-                    finally:
-                        self._job_pending = False
+                    elif self._on_error is not None:
+                        self._on_error(failure, started_at)
+                    else:
+                        LOGGER.error("Ошибка OCR: %s", failure)
+                except Exception:
+                    LOGGER.exception("Ошибка callback OCR")
+                finally:
+                    self._job_pending = False

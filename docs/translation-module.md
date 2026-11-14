@@ -79,14 +79,18 @@ Google и Yandex на контрольном пакете вернули те ж
 
 ## Проверки и воспроизведение
 
-Постоянные тесты находятся в `tests/test_translation_batching.py`, `tests/test_translation_providers.py`, `tests/test_translator.py`: 47 проверок, без сети и платных квот. Проверяются пакетирование, сопоставление, частичные ответы, ограничения, сертификаты, cooldown, отмена, очередь, резерв, TTL, кэш кадра, загрузка клиента и закрытие ресурсов.
+В предыдущем отчёте указаны 47 проверок в `tests/test_translation_batching.py`, `tests/test_translation_providers.py`, `tests/test_translator.py`. В текущем дереве этих файлов нет, поэтому воспроизвести тот набор проверок сейчас нельзя. Доступные тесты `tests/test_hotkeys.py` и `tests/test_ocr_worker.py` проверяют горячие клавиши и продолжение работы OCR после ошибок; они не подтверждают прежние замеры перевода.
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -v
-.venv\Scripts\python.exe -m ruff check --isolated --select E4,E7,E9,F modules\translation tests benchmarks\benchmark_translation.py benchmarks\check_responsiveness.py core\application.py
-.venv\Scripts\python.exe -m compileall -q modules core benchmarks tests
+.venv\Scripts\python.exe -m ruff check --isolated --select E4,E7,E9,F core modules utilities main.py tests
+.venv\Scripts\python.exe -m compileall -q core modules utilities main.py tests
 .venv\Scripts\python.exe -m pip check
+```
 
+Исторические команды замеров ниже требуют восстановления каталога `benchmarks`, которого нет в текущем дереве:
+
+```powershell
 # Реальная цепочка Windows OCR + три провайдера, два повтора
 .venv\Scripts\python.exe benchmarks\run_pipeline.py --phase translation-final --suite providers --images 6 --repeat 2 --cached --strict
 
@@ -99,4 +103,4 @@ Google и Yandex на контрольном пакете вернули те ж
 
 Для полного прогона нужен Windows OCR en-US, для Yandex — `.env` с ключом, для Argos — optional-зависимости и установленная модель en → ru. Онлайн-запуски расходуют квоты. Файл изображения заменяет захват экрана: `total_ms` включает OCR, обработку, перевод и показ, но исключает чтение файла, создание OCR и захват MSS. Подготовка фона пересекается с переводом, поэтому времена стадий нельзя просто сложить.
 
-Исходные JSON/PNG сохранены локально в исключённом из Git `test/benchmarks/translation-final-before` и `test/benchmarks/translation-final`. Сводка, тексты контрольного пакета, переводы, версии библиотек и результаты экспериментов сохранены в отслеживаемом `benchmarks/results/translation-final-2026-11-13.json`. Промежуточные `translation-final-after` и `translation-module-after` — исследовательские прогоны до последней правки TLS; для итогового сравнения используются именно `translation-final` и `translation-module-final`.
+В предыдущем отчёте исходные JSON/PNG указаны в `test/benchmarks/translation-final-before` и `test/benchmarks/translation-final`, сводка — в `benchmarks/results/translation-final-2026-11-13.json`. В текущем дереве этих файлов нет; приведённые выше цифры остаются историческими результатами и в рамках текущего обзора не перепроверялись. Промежуточные `translation-final-after` и `translation-module-after` описывали исследовательские прогоны до последней правки TLS; итоговыми были `translation-final` и `translation-module-final`.

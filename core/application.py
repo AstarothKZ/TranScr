@@ -12,7 +12,7 @@ from tkinter import messagebox
 import keyboard
 
 from core.config import AppConfig
-from core.hotkeys import HotkeyRouter, modifier_is_down
+from core.hotkeys import HotkeyRouter, modifier_is_down, normalize_hotkey
 from core.pipeline import CaptureResult, FrameCache, RuntimeBundle, process_capture
 from core.session_logging import SessionFileHandler
 from modules.capture.area_selector import AreaSelector
@@ -279,13 +279,11 @@ class Application:
                     "provider": provider_key,
                     "hybrid_enabled": bool(self.hybrid_var.get()),
                     "fallback_provider": fallback_key,
-                    "start_hotkey": self.start_hotkey_var.get().strip().lower(),
-                    "quick_area_hotkey": self.quick_area_hotkey_var.get()
-                    .strip()
-                    .lower(),
-                    "screenshot_hotkey": self.screenshot_hotkey_var.get().strip().lower(),
+                    "start_hotkey": normalize_hotkey(self.start_hotkey_var.get()),
+                    "quick_area_hotkey": normalize_hotkey(self.quick_area_hotkey_var.get()),
+                    "screenshot_hotkey": normalize_hotkey(self.screenshot_hotkey_var.get()),
                     "dismiss_mode": self.dismiss_mode_var.get(),
-                    "dismiss_hotkey": self.dismiss_hotkey_var.get().strip().lower(),
+                    "dismiss_hotkey": normalize_hotkey(self.dismiss_hotkey_var.get()),
                     "area": area_value,
                     "repair_incomplete": bool(self.repair_var.get()),
                 }
@@ -422,9 +420,7 @@ class Application:
             if not dismiss_hotkey:
                 self.status_var.set("Укажите сочетание клавиш для сброса перевода.")
                 return
-            if dismiss_hotkey.lower().replace(" ", "") == start_hotkey.lower().replace(
-                " ", ""
-            ):
+            if normalize_hotkey(dismiss_hotkey) == normalize_hotkey(start_hotkey):
                 self.status_var.set("Сочетания запуска и сброса должны отличаться.")
                 return
         self._save_settings()
@@ -553,10 +549,10 @@ class Application:
                 "Обработка захвата…"
             )
             return
-        start_hotkey = self.start_hotkey_var.get().strip().lower().replace(" ", "")
+        start_hotkey = normalize_hotkey(self.start_hotkey_var.get())
         dismiss_mode = self.dismiss_mode_var.get()
-        dismiss_hotkey = self.dismiss_hotkey_var.get().strip().lower().replace(" ", "")
-        quick_hotkey = self.quick_area_hotkey_var.get().strip().lower().replace(" ", "")
+        dismiss_hotkey = normalize_hotkey(self.dismiss_hotkey_var.get())
+        quick_hotkey = normalize_hotkey(self.quick_area_hotkey_var.get())
         try:
             if not start_hotkey:
                 raise ValueError("Сочетание запуска не задано")
@@ -609,11 +605,11 @@ class Application:
             self._events.put(("dismiss", event.name or "", True))
 
     def _screenshot_hotkey(self) -> str:
-        hotkey = self.screenshot_hotkey_var.get().strip().lower().replace(" ", "")
+        hotkey = normalize_hotkey(self.screenshot_hotkey_var.get())
         reserved = {self.start_hotkey_var.get(), self.quick_area_hotkey_var.get()}
         if self.dismiss_mode_var.get() == "hotkey":
             reserved.add(self.dismiss_hotkey_var.get())
-        if hotkey and hotkey in {key.strip().lower().replace(" ", "") for key in reserved}:
+        if hotkey and hotkey in {normalize_hotkey(key) for key in reserved}:
             raise ValueError("Сочетание сохранения снимка должно отличаться от перевода, выбора области и сброса")
         return hotkey
 
