@@ -71,7 +71,7 @@ class SettingsWindow:
         )
         self.area_var = tk.StringVar(value=initial_area_text)
         self.status_var = tk.StringVar(
-            value="Готово. Проверьте настройки и запустите перевод."
+            value="Готово к запуску."
         )
 
         self._configuration_enabled = True
@@ -92,18 +92,14 @@ class SettingsWindow:
         self.status_label = ttk.Label(
             container,
             textvariable=self.status_var,
-            wraplength=590,
+            width=1,
+            wraplength=0,
+            anchor="w",
             justify="left",
             foreground="#245c35",
             padding=(4, 8),
         )
         self.status_label.pack(side="bottom", fill="x")
-        container.bind(
-            "<Configure>",
-            lambda event: self.status_label.configure(
-                wraplength=max(200, event.width - 28)
-            ),
-        )
 
         self.notebook = ttk.Notebook(container)
         self.notebook.pack(fill="both", expand=True)

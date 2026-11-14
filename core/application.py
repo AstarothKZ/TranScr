@@ -298,7 +298,7 @@ class Application:
     def select_area(self) -> None:
         if self._busy or self._starting or self._area_selector is not None:
             self.status_var.set(
-                "Дождитесь завершения текущей операции перед выбором области."
+                "Дождитесь завершения операции."
             )
             return
         self.overlay.clear()
@@ -317,7 +317,7 @@ class Application:
             self._save_settings()
             self._append_log(f"Область выбрана: {self._area_description(bounds)}")
             self.status_var.set(
-                f"Область сохранена. Нажмите «Запустить переводчик» или {self.start_hotkey_var.get().strip()}."
+                "Область сохранена."
             )
 
         def cancelled() -> None:
@@ -335,7 +335,7 @@ class Application:
             )
         except Exception as error:
             self.select_area_button.configure(state="normal")
-            self.status_var.set(f"Не удалось открыть выбор области: {error}")
+            self.status_var.set("Ошибка выбора области. Подробности — в журнале.")
             self._append_log(f"Ошибка выбора области: {error}")
 
     def quick_select_area(self) -> None:
@@ -359,7 +359,7 @@ class Application:
         def cancelled() -> None:
             self._area_selector = None
             self.status_var.set(
-                "Разовый перевод отменён. Сохранённая область не изменена."
+                "Разовый перевод отменён."
             )
 
         try:
@@ -394,7 +394,7 @@ class Application:
             return
         if self._busy:
             self.status_var.set(
-                "Идёт перевод. Дождитесь завершения перед повторным запуском."
+                "Идёт перевод. Дождитесь завершения."
             )
             return
         provider = self.PROVIDER_VALUES.get(self.provider_var.get(), "google")
@@ -437,7 +437,7 @@ class Application:
         self.start_button.configure(state="disabled")
         self.select_area_button.configure(state="disabled")
         self.status_var.set(
-            "Подготовка OCR и переводчика… При первой загрузке может потребоваться время."
+            "Подготовка OCR и переводчика…"
         )
         self._append_log("Инициализация компонентов…")
         setup_thread = threading.Thread(
@@ -539,18 +539,18 @@ class Application:
             self.ui.set_configuration_enabled(True)
             self.start_button.configure(state="normal")
             self.status_var.set(
-                "Компоненты ещё не готовы. Нажмите «Запустить переводчик» ещё раз."
+                "Компоненты ещё не готовы. Повторите запуск."
             )
             return
         if self._active:
             self.status_var.set(
-                f"Переводчик уже запущен. {self._capture_hotkey_text} — захват экрана."
+                f"Работает · {self._capture_hotkey_text} — перевод"
             )
             return
         if self._busy:
             self.ui.set_configuration_enabled(True)
             self.status_var.set(
-                "Сейчас обрабатывается захват; повторный запуск пока недоступен."
+                "Обработка захвата…"
             )
             return
         start_hotkey = self.start_hotkey_var.get().strip().lower().replace(" ", "")
@@ -584,7 +584,7 @@ class Application:
         except Exception as error:
             self._remove_hotkeys()
             self.ui.set_configuration_enabled(True)
-            self.status_var.set(f"Не удалось включить горячие клавиши: {error}")
+            self.status_var.set("Ошибка горячих клавиш. Подробности — в журнале.")
             self._append_log(f"Ошибка горячих клавиш: {error}")
             self.start_button.configure(state="normal")
             return
@@ -594,16 +594,7 @@ class Application:
         self.start_button.configure(text="Запущено", state="disabled")
         self.stop_button.configure(state="normal")
         self.select_area_button.configure(state="normal")
-        reset_text = (
-            "любая клавиша"
-            if self.dismiss_mode_var.get() == "any"
-            else self.dismiss_hotkey_var.get().strip()
-        )
-        actions = [f"{start_hotkey} — перевод"]
-        if quick_hotkey:
-            actions.append(f"{quick_hotkey} — выбрать и перевести")
-        actions.append(f"{reset_text} — сброс")
-        self.status_var.set("Работает. " + "; ".join(actions) + ".")
+        self.status_var.set(f"Работает · {start_hotkey} — перевод")
         mode_text = self.PROVIDER_LABELS[runtime_settings[1]]
         if runtime_settings[2]:
             mode_text += f" → резерв: {self.PROVIDER_LABELS[runtime_settings[3]]}"
@@ -647,7 +638,7 @@ class Application:
             self._install_hotkeys([(key, self._save_screenshot)] if key else [])
         except Exception as error:
             self._remove_hotkeys()
-            self.status_var.set(f"Не удалось включить сочетание снимка: {error}")
+            self.status_var.set("Ошибка сочетания снимка. Подробности — в журнале.")
             self._append_log(f"Ошибка сочетания снимка: {error}")
 
     def _save_screenshot(self) -> None:
@@ -713,7 +704,7 @@ class Application:
         self.stop_button.configure(state="disabled")
         self.ui.set_configuration_enabled(True)
         self.status_var.set(
-            "Переводчик остановлен. Настройки можно изменить и запустить снова."
+            "Переводчик остановлен."
         )
         self._append_log("Переводчик остановлен.")
         self._configure_idle_hotkeys()
@@ -866,7 +857,7 @@ class Application:
                         self.start_button.configure(state="normal")
                         self.select_area_button.configure(state="normal")
                         self.status_var.set(
-                            f"Не удалось подготовить приложение: {item[1]}"
+                            "Ошибка запуска. Подробности — в журнале."
                         )
                         self._append_log(f"Ошибка запуска: {item[1]}")
                     elif kind == "capture_request":
@@ -882,7 +873,7 @@ class Application:
                             self.status_var.set(f"Снимок сохранён: {item[1].name}")
                             self._append_log(f"Снимок сохранён: {item[1]}")
                         else:
-                            self.status_var.set(f"Не удалось сохранить снимок: {item[1]}")
+                            self.status_var.set("Ошибка сохранения снимка. Подробности — в журнале.")
                             self._append_log(f"Ошибка сохранения снимка: {item[1]}")
                     elif kind == "dismiss":
                         _kind, _key_name, cancel_pending = item
@@ -901,7 +892,7 @@ class Application:
                         _kind, _capture_id, generation, error = item
                         self._busy = False
                         if self._active and generation == self._display_generation:
-                            self.status_var.set(f"Ошибка обработки: {error}")
+                            self.status_var.set("Ошибка обработки. Подробности — в журнале.")
                         self._append_log(f"Ошибка захвата: {error}")
                 except tk.TclError:
                     if self._shutting_down:
@@ -912,7 +903,7 @@ class Application:
                     # Keep polling after a bad event so the Start button and status
                     # updates cannot silently stop working for the rest of the run.
                     try:
-                        self.status_var.set(f"Ошибка обработки события: {error}")
+                        self.status_var.set("Ошибка обработки события. Подробности — в журнале.")
                         self._append_log(f"Ошибка обработки события: {error}")
                     except tk.TclError:
                         if self._shutting_down:
@@ -946,7 +937,7 @@ class Application:
                 self.ui.set_configuration_enabled(True)
                 self.start_button.configure(state="normal")
                 self.status_var.set(
-                    "Модель Argos не установлена. Выберите другой переводчик или установите модель."
+                    "Модель Argos не установлена."
                 )
                 self._append_log(
                     "Запуск не активирован: отсутствует модель Argos en → ru."
@@ -981,7 +972,7 @@ class Application:
                     prepared=result.overlay,
                 )
             except Exception as error:
-                self.status_var.set(f"Перевод получен, но оверлей не показан: {error}")
+                self.status_var.set("Ошибка оверлея. Подробности — в журнале.")
                 self._append_log(f"Ошибка оверлея: {error}")
                 return
             self._last_capture_result = result
@@ -991,14 +982,12 @@ class Application:
             )
             if result.cache_hit:
                 self.status_var.set(
-                    f"Показано из кэша: {display.regions} блок(а/ов) · "
-                    f"OCR и перевод повторно не выполнялись."
+                    f"Готово из кэша · блоков: {display.regions}"
                 )
             else:
                 self.status_var.set(
-                    f"Готово: {display.regions} блок(а/ов), пропущено {display.skipped} · "
-                    f"OCR {result.ocr_ms:.0f} мс · перевод {result.translate_ms:.0f} мс · "
-                    f"захват {result.capture_ms:.0f} мс"
+                    f"Готово · блоков: {display.regions} · "
+                    f"{(perf_counter() - self._capture_started) * 1000:.0f} мс"
                 )
             self._append_log(
                 f"Захват #{capture_id}: OCR {result.ocr_ms:.0f} мс; "
@@ -1012,16 +1001,16 @@ class Application:
             self._append_log("OCR не распознал текст.")
         elif result.filtered_count == result.recognized_count and not result.errors:
             self.status_var.set(
-                "В выбранной области только числа, даты или кодоподобные строки."
+                "Нет текста для перевода после фильтрации."
             )
             self._append_log(f"Пропущено фильтром блоков: {result.filtered_count}.")
         elif result.errors:
             self.status_var.set(
-                "Не удалось перевести подходящий текст. Подробности — в журнале."
+                "Ошибка перевода. Подробности — в журнале."
             )
         else:
             self.status_var.set(
-                "Перевод не изменился или не был получен; оверлей не показан."
+                "Нет изменений для отображения."
             )
             self._append_log("Неотличимые от оригинала результаты не отображены.")
 
