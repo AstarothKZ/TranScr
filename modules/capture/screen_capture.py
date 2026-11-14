@@ -46,16 +46,17 @@ class ScreenCapturer:
                 # The translation pipeline is serialized, so this MSS instance
                 # is reused by the same worker for subsequent captures.
                 self._sct = mss.MSS()
-            sct = self._sct
+            # Keep close() from releasing the backend between lookup and grab.
+            screenshot = self._sct.grab(monitor)
 
-        screenshot = sct.grab(monitor)
-        # The NumPy view keeps the screenshot's byte buffer alive and avoids a
-        # second full-frame copy. OCR engines in this project only read pixels.
-        rgb = screenshot.rgb
-        image = np.frombuffer(rgb, dtype=np.uint8).reshape(
-            screenshot.height, screenshot.width, 3
-        )
-
+        # MSS supplies BGRA. Copy directly into one contiguous RGB allocation,
+        # avoiding the sliced byte buffers and extra bytes copy in .rgb.
+        bgra = np.asarray(screenshot)
+        image = np.empty((screenshot.height, screenshot.width, 3), dtype=np.uint8)
+        image[..., 0] = bgra[..., 2]
+        image[..., 1] = bgra[..., 1]
+        image[..., 2] = bgra[..., 0]
+        image.setflags(write=False)
         return image
 
     def close(self) -> None:

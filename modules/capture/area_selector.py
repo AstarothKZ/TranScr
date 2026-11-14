@@ -71,9 +71,9 @@ class AreaSelector:
         if os.name != "nt":
             return
         try:
-            user32 = getattr(ctypes, "windll").user32
+            user32 = ctypes.windll.user32
             hwnd = int(str(self.window.wm_frame()), 0)
-            set_window_pos = getattr(user32, "SetWindowPos")
+            set_window_pos = user32.SetWindowPos
             set_window_pos.argtypes = [
                 wintypes.HWND,
                 wintypes.HWND,
@@ -99,15 +99,24 @@ class AreaSelector:
             # Tk's geometry fallback still works on common single-monitor setups.
             pass
 
+    def _point(self, event) -> tuple[int, int]:
+        return (
+            max(0, min(self.screen_width, event.x)),
+            max(0, min(self.screen_height, event.y)),
+        )
+
     def _start_drag(self, event) -> None:
-        self._start = (event.x, event.y)
+        if self._closed:
+            return
+        self._start = self._point(event)
+        x, y = self._start
         if self._rect_id is not None:
             self.canvas.delete(self._rect_id)
         self._rect_id = self.canvas.create_rectangle(
-            event.x,
-            event.y,
-            event.x,
-            event.y,
+            x,
+            y,
+            x,
+            y,
             outline="#2fffd0",
             width=3,
             fill="#2f8fff",
@@ -115,17 +124,17 @@ class AreaSelector:
         )
 
     def _drag(self, event) -> None:
-        if self._start is None or self._rect_id is None:
+        if self._closed or self._start is None or self._rect_id is None:
             return
         self.canvas.coords(
-            self._rect_id, self._start[0], self._start[1], event.x, event.y
+            self._rect_id, *self._start, *self._point(event)
         )
 
     def _finish_drag(self, event) -> None:
-        if self._start is None:
+        if self._closed or self._start is None:
             return
         x1, y1 = self._start
-        x2, y2 = event.x, event.y
+        x2, y2 = self._point(event)
         left, top = min(x1, x2), min(y1, y2)
         width, height = abs(x2 - x1), abs(y2 - y1)
         self._start = None
@@ -153,6 +162,7 @@ class AreaSelector:
         if self._closed:
             return
         self._closed = True
+        self._start = None
         try:
             self.window.destroy()
         except tk.TclError:
