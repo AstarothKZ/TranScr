@@ -21,12 +21,17 @@ class HotkeyRouter:
         self.bindings = []
         self.pressed = set()
         self.dismiss = dismiss
+        signatures = set()
         for text, callback in bindings:
             steps = parse_hotkey(text)
             if len(steps) != 1:
                 raise ValueError(
                     "Используйте одно сочетание клавиш без последовательностей через запятую"
                 )
+            signature = (frozenset(frozenset(codes) for codes in steps[0]), frozenset(steps[0][-1]))
+            if signature in signatures:
+                raise ValueError(f"Сочетание {text} уже назначено другому действию")
+            signatures.add(signature)
             self.bindings.append(([set(codes) for codes in steps[0]], callback, text.split("+")[-1].strip(), text.lower().split("+")[:-1]))
 
     def __call__(self, event):

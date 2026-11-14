@@ -58,6 +58,9 @@ class SettingsWindow:
         self.quick_area_hotkey_var = tk.StringVar(
             value=saved_settings.get("quick_area_hotkey", "alt+q")
         )
+        self.screenshot_hotkey_var = tk.StringVar(
+            value=saved_settings.get("screenshot_hotkey", "")
+        )
         self.dismiss_mode_var = tk.StringVar(
             value=saved_settings.get("dismiss_mode", "any")
         )
@@ -65,9 +68,6 @@ class SettingsWindow:
             value=saved_settings.get("dismiss_hotkey", "esc")
         )
         self.area_var = tk.StringVar(value=initial_area_text)
-        self.save_debug_var = tk.BooleanVar(
-            value=bool(saved_settings.get("save_debug_screenshots", False))
-        )
         self.status_var = tk.StringVar(
             value="Готово. Проверьте настройки и запустите перевод."
         )
@@ -213,6 +213,19 @@ class SettingsWindow:
             row=5, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
         )
         self.quick_area_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
+        ttk.Label(hotkey_frame, text="Сохранить снимок").grid(
+            row=6, column=0, sticky="w", pady=(8, 0)
+        )
+        self.screenshot_hotkey_entry = ttk.Entry(
+            hotkey_frame, textvariable=self.screenshot_hotkey_var, width=22
+        )
+        self.screenshot_hotkey_entry.grid(
+            row=6, column=1, sticky="ew", padx=(10, 0), pady=(8, 0)
+        )
+        self.screenshot_hotkey_entry.bind("<FocusOut>", lambda _event: self._save())
+        ttk.Label(hotkey_frame, text="Можно оставить пустым", foreground="#666666").grid(
+            row=7, column=1, sticky="w", padx=(10, 0), pady=(2, 0)
+        )
 
         area_frame = ttk.LabelFrame(outer, text="Область захвата", padding=10)
         area_frame.pack(fill="x", pady=(9, 0))
@@ -231,13 +244,14 @@ class SettingsWindow:
             command=self._callbacks["select_full_screen"],
         )
         self.full_screen_button.pack(side="left", padx=(8, 0), ipadx=3, ipady=1)
-        self.save_debug_checkbutton = ttk.Checkbutton(
+        self.save_screenshot_button = ttk.Button(
             area_frame,
-            text="Сохранять скриншоты для отладки",
-            variable=self.save_debug_var,
-            command=self._save,
+            text="Сохранить снимок с оверлеем",
+            command=self._callbacks["save_screenshot"],
         )
-        self.save_debug_checkbutton.pack(anchor="w", pady=(7, 0))
+        self.save_screenshot_button.pack(anchor="w", pady=(7, 0))
+        ttk.Label(area_frame, text="PNG → папка screenshots рядом с приложением",
+                  foreground="#666666").pack(anchor="w", pady=(3, 0))
 
         buttons = ttk.Frame(container)
         # Allocate actions before the expanding notebook, just like status.
@@ -440,7 +454,7 @@ class SettingsWindow:
         self.quick_area_hotkey_entry.configure(
             state="normal" if enabled else "disabled"
         )
-        self.save_debug_checkbutton.configure(state="normal" if enabled else "disabled")
+        self.screenshot_hotkey_entry.configure(state="normal" if enabled else "disabled")
         self.repair_check.configure(state='normal' if enabled else 'disabled')
         self._update_hybrid_controls()
         self._update_dismiss_controls()

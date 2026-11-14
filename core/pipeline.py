@@ -8,7 +8,6 @@ import numpy as np
 import threading
 from dataclasses import dataclass, field, replace
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from queue import Empty, Queue
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -64,7 +63,6 @@ class CaptureResult:
     translate_ms: float
     capture_ms: float
     errors: list[str]
-    screenshot_path: Path | None = None
     cache_hit: bool = False
     source_image: np.ndarray | None = None
     background_ms: float = 0.0
@@ -93,7 +91,6 @@ class FrameCache:
         area: ScreenBounds,
         fingerprint: bytes,
         capture_ms: float,
-        screenshot_path: Path | None,
     ) -> CaptureResult | None:
         with self._lock:
             if self._last_key != (area, fingerprint) or self._last_result is None:
@@ -111,7 +108,6 @@ class FrameCache:
                 background_ms=0.0,
                 processing_ms=0.0,
                 overlay_prepare_ms=0.0,
-                screenshot_path=screenshot_path,
                 cache_hit=True,
             )
 
@@ -131,7 +127,6 @@ class FrameCache:
 def process_capture(
     screen_capturer: ScreenCapturer,
     area: ScreenBounds,
-    save_debug: bool,
     runtime: RuntimeBundle,
     frame_cache: FrameCache | None = None,
     cancel: threading.Event | None = None,
@@ -145,12 +140,12 @@ def process_capture(
     if cancel is not None and cancel.is_set():
         return cancelled_result()
     LOGGER.info("Захватываю экран: x=%s y=%s w=%s h=%s", *area)
-    image, screenshot_path = screen_capturer.capture_region(area, save_debug=save_debug)
+    image = screen_capturer.capture_region(area)
     capture_ms = (perf_counter() - capture_started) * 1000
     LOGGER.info("Кадр получен за %.0f мс", capture_ms)
     fingerprint = FrameCache.fingerprint(image) if frame_cache is not None else b""
     if frame_cache is not None:
-        cached = frame_cache.get(area, fingerprint, capture_ms, screenshot_path)
+        cached = frame_cache.get(area, fingerprint, capture_ms)
         if cached is not None:
             LOGGER.info("Совпадение в кэше кадра: повторно использую OCR и перевод")
             return cached
@@ -188,11 +183,11 @@ def process_capture(
     )
     if cancel is not None and cancel.is_set():
         return CaptureResult(
-            area, [], len(recognized), 0, ocr_ms, 0.0, capture_ms, [], screenshot_path
+            area, [], len(recognized), 0, ocr_ms, 0.0, capture_ms, []
         )
     if not recognized:
         result = CaptureResult(
-            area, [], 0, 0, ocr_ms, 0.0, capture_ms, [], screenshot_path
+            area, [], 0, 0, ocr_ms, 0.0, capture_ms, []
         )
         if frame_cache is not None:
             frame_cache.put(area, fingerprint, result)
@@ -238,7 +233,6 @@ def process_capture(
             0.0,
             capture_ms,
             [],
-            screenshot_path,
         )
         if frame_cache is not None:
             frame_cache.put(area, fingerprint, result)
@@ -326,7 +320,6 @@ def process_capture(
         capture_ms=capture_ms,
         errors=errors,
         source_image=image,
-        screenshot_path=screenshot_path,
         background_ms=background_ms,
         processing_ms=processing_ms,
         overlay_prepare_ms=overlay_prepare_ms,

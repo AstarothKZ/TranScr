@@ -10,3 +10,4 @@ test/
 .ruff_cache/
 
 logs/
+screenshots/

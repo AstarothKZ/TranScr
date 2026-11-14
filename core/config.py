@@ -20,10 +20,10 @@ class AppConfig:
         "fallback_provider": "argos",
         "start_hotkey": "alt+t",
         "quick_area_hotkey": "alt+q",
+        "screenshot_hotkey": "",
         "dismiss_mode": "any",
         "dismiss_hotkey": "esc",
         "area": None,
-        "save_debug_screenshots": False,
         "repair_incomplete": False,
     }
 
@@ -88,8 +88,12 @@ class AppConfig:
                 result[key] = default
             else:
                 result[key] = value.strip().lower()
-        if not isinstance(result["save_debug_screenshots"], bool):
-            result["save_debug_screenshots"] = False
+        screenshot_hotkey = result.get("screenshot_hotkey")
+        result["screenshot_hotkey"] = (
+            screenshot_hotkey.strip().lower()
+            if isinstance(screenshot_hotkey, str) and len(screenshot_hotkey) <= 64
+            else ""
+        )
         if not isinstance(result["repair_incomplete"], bool):
             result["repair_incomplete"] = False
         if not self._valid_area(result["area"]):

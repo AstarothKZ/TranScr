@@ -15,6 +15,7 @@ from core.config import AppConfig
 from core.hotkeys import HotkeyRouter, modifier_is_down
 from core.pipeline import CaptureResult, FrameCache, RuntimeBundle, process_capture
 from core.session_logging import SessionFileHandler
+from core.screenshots import compose_screenshot, save_screenshot, screenshot_prefix
 from modules.capture.area_selector import AreaSelector
 from modules.capture.screen_capture import ScreenCapturer
 from modules.capture.types import ScreenBounds
@@ -72,12 +73,12 @@ class Application:
 
     def __init__(self) -> None:
         self.project_root = Path(__file__).resolve().parents[1]
-        screenshot_dir = self.project_root / "test" / "screenshots"
+        self.screenshot_dir = self.project_root / "screenshots"
 
         self.root = tk.Tk()
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
 
-        self.screen_capturer = ScreenCapturer(screenshot_dir)
+        self.screen_capturer = ScreenCapturer()
         self.full_screen_bounds = self.screen_capturer.virtual_bounds
         self.config = AppConfig(self.project_root)
         self._saved_settings = self.config.load()
@@ -92,6 +93,13 @@ class Application:
         self._capture_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="transcr-pipeline"
         )
+        self._screenshot_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="transcr-screenshot"
+        )
+        self._saving_screenshot = False
+        self._restore_after_screenshot = False
+        self._screenshot_after_id = None
+        self._last_capture_result: CaptureResult | None = None
         self._frame_cache = FrameCache()
         self._runtime: RuntimeBundle | None = None
         self._runtime_settings: tuple[str, str, bool, str, bool] | None = None
@@ -117,6 +125,7 @@ class Application:
         self._dependency_log_handler: QueueLogHandler | None = None
         self._setup_logger()
         self._build_ui()
+        self._configure_idle_hotkeys()
         self._append_log("Приложение запущено. Настройки загружены.")
         self._poll_after_id = self.root.after(20, self._poll_events)
 
@@ -196,6 +205,7 @@ class Application:
                 "select_full_screen": self.select_full_screen,
                 "start": self.start,
                 "capture": lambda: self._events.put(("capture_request", "button")),
+                "save_screenshot": self._save_screenshot,
                 "stop": self.stop,
                 "save_settings": self._save_settings,
             },
@@ -208,10 +218,11 @@ class Application:
         self.repair_var = self.ui.repair_var
         self.start_hotkey_var = self.ui.start_hotkey_var
         self.quick_area_hotkey_var = self.ui.quick_area_hotkey_var
+        self.screenshot_hotkey_var = self.ui.screenshot_hotkey_var
         self.dismiss_mode_var = self.ui.dismiss_mode_var
         self.dismiss_hotkey_var = self.ui.dismiss_hotkey_var
         self.area_var = self.ui.area_var
-        self.save_debug_var = self.ui.save_debug_var
+        self.save_screenshot_button = self.ui.save_screenshot_button
         self.status_var = self.ui.status_var
         self.select_area_button = self.ui.select_area_button
         self.start_button = self.ui.start_button
@@ -276,13 +287,15 @@ class Application:
                     "quick_area_hotkey": self.quick_area_hotkey_var.get()
                     .strip()
                     .lower(),
+                    "screenshot_hotkey": self.screenshot_hotkey_var.get().strip().lower(),
                     "dismiss_mode": self.dismiss_mode_var.get(),
                     "dismiss_hotkey": self.dismiss_hotkey_var.get().strip().lower(),
                     "area": area_value,
-                    "save_debug_screenshots": bool(self.save_debug_var.get()),
                     "repair_incomplete": bool(self.repair_var.get()),
                 }
             )
+            if not self._active and not self._shutting_down:
+                self._configure_idle_hotkeys()
         except Exception as error:
             self._append_log(f"Не удалось сохранить настройки: {error}")
 
@@ -575,6 +588,7 @@ class Application:
             self.start_button.configure(state="normal")
             return
         try:
+            screenshot_hotkey = self._screenshot_hotkey()
             self._capture_hotkey_text = start_hotkey
             bindings = [
                 (start_hotkey, lambda: self._events.put(("capture_request", "hotkey"))),
@@ -587,19 +601,11 @@ class Application:
                         lambda: self._events.put(("dismiss", dismiss_hotkey, True)),
                     )
                 )
-            token = object()
-            self._hotkey_session = token
-            # Queue the action with its registration identity; stop/restart
-            # invalidates commands still waiting on the UI thread.
-            bindings = [(name, lambda action=action: self._events.put(("hotkey_command", token, action)))
-                        for name, action in bindings]
-            self._hotkey_router = HotkeyRouter(
-                bindings,
-                keyboard.parse_hotkey,
-                self._dismiss_unbound_key if dismiss_mode == "any" else None,
-                modifier_state=modifier_is_down,
+            if screenshot_hotkey:
+                bindings.append((screenshot_hotkey, self._save_screenshot))
+            self._install_hotkeys(
+                bindings, self._dismiss_unbound_key if dismiss_mode == "any" else None
             )
-            self._keyboard_hook = keyboard.hook(self._hotkey_router, suppress=False)
         except Exception as error:
             self._remove_hotkeys()
             self.ui.set_configuration_enabled(True)
@@ -635,6 +641,85 @@ class Application:
         ):
             self._events.put(("dismiss", event.name or "", True))
 
+    def _screenshot_hotkey(self) -> str:
+        hotkey = self.screenshot_hotkey_var.get().strip().lower().replace(" ", "")
+        reserved = {self.start_hotkey_var.get(), self.quick_area_hotkey_var.get()}
+        if self.dismiss_mode_var.get() == "hotkey":
+            reserved.add(self.dismiss_hotkey_var.get())
+        if hotkey and hotkey in {key.strip().lower().replace(" ", "") for key in reserved}:
+            raise ValueError("Сочетание сохранения снимка должно отличаться от перевода, выбора области и сброса")
+        return hotkey
+
+    def _install_hotkeys(self, bindings, dismiss=None) -> None:
+        self._remove_hotkeys()
+        token = object()
+        self._hotkey_session = token
+        if not bindings:
+            return
+        commands = [
+            (name, lambda action=action: self._events.put(("hotkey_command", token, action)))
+            for name, action in bindings
+        ]
+        self._hotkey_router = HotkeyRouter(
+            commands, keyboard.parse_hotkey, dismiss, modifier_state=modifier_is_down
+        )
+        self._keyboard_hook = keyboard.hook(self._hotkey_router, suppress=False)
+
+    def _configure_idle_hotkeys(self) -> None:
+        try:
+            key = self._screenshot_hotkey()
+            self._install_hotkeys([(key, self._save_screenshot)] if key else [])
+        except Exception as error:
+            self._remove_hotkeys()
+            self.status_var.set(f"Не удалось включить сочетание снимка: {error}")
+            self._append_log(f"Ошибка сочетания снимка: {error}")
+
+    def _save_screenshot(self) -> None:
+        if self._shutting_down or self._saving_screenshot or self._area_selector is not None:
+            return
+        self._saving_screenshot = True
+        self._restore_after_screenshot = False
+        self.save_screenshot_button.configure(state="disabled")
+        settings = self._runtime_settings if self._active else None
+        prefix = screenshot_prefix(settings)
+        result = self._last_capture_result if self._active and self.overlay.visible else None
+        area = self.selected_area
+        self.status_var.set("Сохраняю снимок…")
+
+        def write():
+            if result is not None and result.source_image is not None:
+                image = compose_screenshot(result.source_image, result.overlay)
+            else:
+                # MSS must be created and closed on this worker, independently
+                # of the OCR worker's thread-local desktop-capture handle.
+                capturer = ScreenCapturer()
+                try:
+                    image = compose_screenshot(capturer.capture_region(area))
+                finally:
+                    capturer.close()
+            return save_screenshot(image, self.screenshot_dir, prefix)
+
+        def submit():
+            self._screenshot_after_id = None
+            if self._shutting_down:
+                return
+            future = self._screenshot_executor.submit(write)
+
+            def finished(done):
+                try:
+                    self._events.put(("screenshot_saved", done.result()))
+                except Exception as error:
+                    self._events.put(("screenshot_error", error))
+
+            future.add_done_callback(finished)
+
+        if result is None and self.root.state() == "normal":
+            self._restore_after_screenshot = not self._active and not self._starting
+            self.root.iconify()
+            self._screenshot_after_id = self.root.after(160, submit)
+        else:
+            submit()
+
     def stop(self) -> None:
         if self._starting:
             self.status_var.set("Подождите, пока завершится подготовка компонентов.")
@@ -648,6 +733,7 @@ class Application:
             self._area_selector.cancel()
         self._remove_hotkeys()
         self.overlay.clear()
+        self._last_capture_result = None
         self.start_button.configure(text="Запустить переводчик", state="normal")
         self.stop_button.configure(state="disabled")
         self.capture_button.configure(state="disabled")
@@ -656,6 +742,7 @@ class Application:
             "Переводчик остановлен. Настройки можно изменить и запустить снова."
         )
         self._append_log("Переводчик остановлен.")
+        self._configure_idle_hotkeys()
         try:
             self.root.deiconify()
             self.root.lift()
@@ -702,7 +789,6 @@ class Application:
         )
         generation = self._display_generation
         area = area_override or self.selected_area
-        save_debug = bool(self.save_debug_var.get())
         runtime = self._runtime
         needs_repaint = self.overlay.visible and not self.overlay.capture_excluded
         self.overlay.clear()
@@ -719,7 +805,7 @@ class Application:
         self._capture_after_id = self.root.after(
             160 if needs_repaint else 0,
             lambda: self._submit_capture(
-                capture_id, generation, area, save_debug, runtime
+                capture_id, generation, area, runtime
             ),
         )
 
@@ -728,7 +814,6 @@ class Application:
         capture_id: int,
         generation: int,
         area: ScreenBounds,
-        save_debug: bool,
         runtime: RuntimeBundle,
     ) -> None:
         self._capture_after_id = None
@@ -743,7 +828,6 @@ class Application:
             process_capture,
             self.screen_capturer,
             area,
-            save_debug,
             runtime,
             self._frame_cache,
             self._capture_cancel,
@@ -798,7 +882,7 @@ class Application:
                 try:
                     kind = item[0]
                     if kind == "hotkey_command":
-                        if self._active and item[1] is getattr(self, "_hotkey_session", None):
+                        if item[1] is getattr(self, "_hotkey_session", None):
                             item[2]()
                     elif kind == "runtime_ready":
                         self._handle_runtime_ready(item[1])
@@ -815,6 +899,18 @@ class Application:
                         self._start_capture(item[1])
                     elif kind == "quick_area_request":
                         self.quick_select_area()
+                    elif kind in {"screenshot_saved", "screenshot_error"}:
+                        self._saving_screenshot = False
+                        self.save_screenshot_button.configure(state="normal")
+                        if self._restore_after_screenshot and not self._active and not self._starting:
+                            self.root.deiconify()
+                        self._restore_after_screenshot = False
+                        if kind == "screenshot_saved":
+                            self.status_var.set(f"Снимок сохранён: {item[1].name}")
+                            self._append_log(f"Снимок сохранён: {item[1]}")
+                        else:
+                            self.status_var.set(f"Не удалось сохранить снимок: {item[1]}")
+                            self._append_log(f"Ошибка сохранения снимка: {item[1]}")
                     elif kind == "dismiss":
                         _kind, _key_name, cancel_pending = item
                         if cancel_pending:
@@ -889,10 +985,6 @@ class Application:
         self, capture_id: int, generation: int, result: CaptureResult
     ) -> None:
         self._busy = False
-        if result.screenshot_path is not None:
-            self._append_log(
-                f"Скриншот для отладки: {result.screenshot_path.as_posix()}"
-            )
         if result.errors:
             for error in result.errors[:6]:
                 self._append_log(f"Перевод пропущен: {error}")
@@ -919,6 +1011,7 @@ class Application:
                 self.status_var.set(f"Перевод получен, но оверлей не показан: {error}")
                 self._append_log(f"Ошибка оверлея: {error}")
                 return
+            self._last_capture_result = result
             self._append_log(
                 f"Оверлей {(perf_counter() - overlay_started) * 1000:.0f} мс; "
                 f"от запроса до показа {(perf_counter() - self._capture_started) * 1000:.0f} мс."
@@ -982,7 +1075,7 @@ class Application:
                     self._close_runtime(event[1])
         self._capture_cancel.set()
         self._active = False
-        for callback in (self._poll_after_id, self._capture_after_id):
+        for callback in (self._poll_after_id, self._capture_after_id, self._screenshot_after_id):
             if callback is not None:
                 try:
                     self.root.after_cancel(callback)
@@ -1039,6 +1132,7 @@ class Application:
 
         self._capture_executor.submit(release_resources)
         self._capture_executor.shutdown(wait=False)
+        self._screenshot_executor.shutdown(wait=False)
         try:
             self.root.destroy()
         except tk.TclError:

@@ -1,11 +1,8 @@
 """Efficient capture of the selected part of the Windows virtual desktop."""
 
 import threading
-from datetime import datetime
-from pathlib import Path
 
 import mss
-import mss.tools
 import numpy as np
 
 from .types import ScreenBounds
@@ -14,9 +11,7 @@ from .types import ScreenBounds
 class ScreenCapturer:
     """Captures one rectangle; MSS is reused between calls where possible."""
 
-    def __init__(self, output_dir: Path) -> None:
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self) -> None:
         self.virtual_bounds = self.get_virtual_screen_bounds()
         self._sct = None
         self._sct_lock = threading.Lock()
@@ -36,10 +31,8 @@ class ScreenCapturer:
     def capture_region(
         self,
         bounds: ScreenBounds | None = None,
-        *,
-        save_debug: bool = False,
-    ) -> tuple[np.ndarray, Path | None]:
-        """Capture an absolute desktop rectangle and return RGB pixels plus an optional PNG path."""
+    ) -> np.ndarray:
+        """Capture an absolute desktop rectangle and return RGB pixels."""
         left, top, width, height = bounds or self.virtual_bounds
         left, top, width, height = int(left), int(top), int(width), int(height)
         if width < 1 or height < 1:
@@ -63,14 +56,7 @@ class ScreenCapturer:
             screenshot.height, screenshot.width, 3
         )
 
-        output_path = None
-        if save_debug:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
-            output_path = self.output_dir / f"screenshot_{timestamp}.png"
-            mss.tools.to_png(rgb, screenshot.size, output=str(output_path))
-
-        return image, output_path
+        return image
 
     def close(self) -> None:
         with self._sct_lock:
