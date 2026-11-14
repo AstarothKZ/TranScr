@@ -20,7 +20,11 @@ from modules.text_processing.geometry import prepare_lines
 from modules.overlay.background import prepare_background
 from modules.overlay.preparation import PreparedOverlay, prepare_overlay
 from modules.translation.batching import TranslationCancelled
-from modules.text_processing.filters import should_translate, translation_changed
+from modules.text_processing.filters import (
+    should_translate,
+    table_identifier_indices,
+    translation_changed,
+)
 from modules.text_processing.image_validation import has_source_ink
 from modules.text_processing.text_regions import (
     TextRegion,
@@ -204,7 +208,17 @@ def process_capture(
             len(recognized) - len(valid_lines),
         )
     valid_lines = prepare_lines(image, valid_lines)
-    meaningful_lines = [item for item in valid_lines if should_translate(item.text)]
+    table_identifiers = table_identifier_indices(valid_lines)
+    if table_identifiers:
+        LOGGER.info(
+            "Фильтрация: сохранено обозначений в колонках таблицы: %d",
+            len(table_identifiers),
+        )
+    meaningful_lines = [
+        item
+        for index, item in enumerate(valid_lines)
+        if index not in table_identifiers and should_translate(item.text)
+    ]
     filtered_count = len(recognized) - len(meaningful_lines)
     regions = group_ocr_texts(meaningful_lines, context=valid_lines)
     eligible = [region for region in regions if should_translate(region.text)]
