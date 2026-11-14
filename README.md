@@ -47,13 +47,3 @@ PaddleOCR и офлайн-перевод Argos — дополнительные 
 [Все действующие фильтры](docs/filters.md): правила отбора текста, защита данных и таблиц, геометрические проверки, отбор результатов для наложения и проверка на десяти исходниках.
 
 [Модуль перевода: итоговые правки и замеры на №6](docs/translation-module.md): поведение Google, Yandex и Argos, кэш, отмена, резервный перевод и результаты предыдущих замеров.
-
-## Проверки
-
-```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
-
-.venv\Scripts\python.exe -m compileall -q core modules utilities tests
-```
-
-Параметры для сравнения на другой машине: `TRANSCR_PADDLE_THREADS` (по умолчанию 2 CPU-потока), `ARGOS_BEAM_SIZE` (2), `ARGOS_COMPUTE_TYPE` (`int8` для CPU), `ARGOS_INTRA_THREADS` (до 4). `TRANSCR_HTTP2=0` отключает HTTP/2 для диагностики сети. Эти переменные можно задать в `.env`.
